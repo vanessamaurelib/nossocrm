@@ -111,53 +111,55 @@ export class GPTMakerWhatsAppProvider extends BaseChannelProvider {
    *
    * Onde `chatId` = contextId = external_contact_id da conversa.
    */
-  async sendMessage(params: SendMessageParams): Promise<SendMessageResult> {
-    const { to, content } = params;
+async sendMessage(params: SendMessageParams): Promise<SendMessageResult> {
+  const { to, content } = params;
 
-    try {
-      // Suporta apenas texto por enquanto
-      // Mídia pode ser adicionada futuramente via GPTMaker API
-      if (content.type !== 'text') {
-        return this.errorResult(
-          'UNSUPPORTED_CONTENT',
-          `Tipo de conteúdo não suportado pelo GPTMaker: ${content.type}`
-        );
-      }
-
-      const text = (content as TextContent).text;
-      const chatId = to; // external_contact_id = contextId do GPTMaker
-
-      const response = await fetch(`${GPTMAKER_API_URL}/chat/${chatId}/send-message`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${this.apiKey}`,
-        },
-        body: JSON.stringify({ message: text }),
-      });
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        this.log('error', 'GPTMaker API error', { status: response.status, body: errorText });
-        return this.errorResult(
-          'API_ERROR',
-          `GPTMaker retornou erro ${response.status}: ${errorText}`,
-          response.status >= 500 // retryable se for erro de servidor
-        );
-      }
-
-      const data = await response.json() as GPTMakerSendResponse;
-
-      return this.successResult(data.messageId ?? `gptmaker-${Date.now()}`);
-    } catch (error) {
-      this.log('error', 'Falha ao enviar mensagem', { error, to });
+  try {
+    if (content.type !== 'text') {
       return this.errorResult(
-        'REQUEST_FAILED',
-        error instanceof Error ? error.message : 'Erro desconhecido',
-        true
+        'UNSUPPORTED_CONTENT',
+        `Tipo de conteúdo não suportado pelo GPTMaker: ${content.type}`
       );
     }
+
+    const text = (content as TextContent).text;
+    const chatId = to;
+
+    // Chama Edge Function do Supabase como proxy (evita ETIMEDOUT do Vercel)
+    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+    const proxyUrl = `${supabaseUrl}/functions/v1/send-message`;
+
+    const response = await fetch(proxyUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        chatId,
+        message: text,
+        apiKey: this.apiKey,
+      }),
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      return this.errorResult('PROXY_ERROR', `Proxy retornou erro ${response.status}: ${errorText}`);
+    }
+
+    const data = await response.json() as { success: boolean; data?: { messageId?: string }; error?: string };
+
+    if (!data.success) {
+      return this.errorResult('API_ERROR', data.error ?? 'Erro desconhecido do GPTMaker');
+    }
+
+    return this.successResult(data.data?.messageId ?? `gptmaker-${Date.now()}`);
+  } catch (error) {
+    this.log('error', 'Falha ao enviar mensagem', { error, to });
+    return this.errorResult(
+      'REQUEST_FAILED',
+      error instanceof Error ? error.message : 'Erro desconhecido',
+      true
+    );
   }
+}
 
   // ---------------------------------------------------------------------------
   // Webhook
