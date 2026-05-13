@@ -72,6 +72,7 @@ export function useMessagesInfinite(conversationId: string | undefined) {
         .select('*')
         .eq('conversation_id', conversationId!)
         .order('created_at', { ascending: false }) // Newest first for pagination
+        .order('id', { ascending: false })
         .limit(PAGE_SIZE);
 
       // Use cursor-based pagination (created_at)
