@@ -43,6 +43,7 @@ export function useMessages(conversationId: string | undefined) {
         .select('*')
         .eq('conversation_id', conversationId!)
         .order('created_at', { ascending: true })
+        .order('id', { ascending: true })
         .limit(200); // Limit to last 200 messages for performance
 
       if (error) throw error;
