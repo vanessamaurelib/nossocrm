@@ -10,7 +10,7 @@
 export { BaseChannelProvider } from './base.provider';
 
 // WhatsApp providers
-export { ZApiWhatsAppProvider, MetaCloudWhatsAppProvider, EvolutionWhatsAppProvider } from './whatsapp';
+export { ZApiWhatsAppProvider, MetaCloudWhatsAppProvider, EvolutionWhatsAppProvider, GPTMakerWhatsAppProvider } from './whatsapp';
 export type {
   ZApiCredentials,
   ZApiWebhookPayload,
@@ -18,6 +18,7 @@ export type {
   MetaCloudWebhookPayload,
   EvolutionCredentials,
   EvolutionWebhookPayload,
+  GPTMakerCredentials,
 } from './whatsapp';
 
 // Instagram providers
@@ -33,7 +34,7 @@ export type { ResendCredentials, ResendWebhookPayload } from './email';
 // =============================================================================
 
 import { registerProvider } from '../channel-factory';
-import { ZApiWhatsAppProvider, MetaCloudWhatsAppProvider, EvolutionWhatsAppProvider } from './whatsapp';
+import { ZApiWhatsAppProvider, MetaCloudWhatsAppProvider, EvolutionWhatsAppProvider, GPTMakerWhatsAppProvider } from './whatsapp';
 import { MetaInstagramProvider } from './instagram';
 import { ResendEmailProvider } from './email';
 
@@ -261,3 +262,31 @@ registerProvider({
   ],
   features: ['media', 'read_receipts', 'qr_code'],
 });
+// Register GPTMaker provider
+registerProvider({
+  channelType: 'whatsapp',
+  providerName: 'gptmaker',
+  constructor: GPTMakerWhatsAppProvider,
+  displayName: 'GPTMaker',
+  description: 'WhatsApp via GPTMaker (API oficial Meta)',
+  configFields: [
+    {
+      key: 'apiKey',
+      label: 'API Key do GPTMaker',
+      type: 'password',
+      required: true,
+      placeholder: 'sua-api-key',
+      helpText: 'Encontre em app.gptmaker.ai > Configurações > API',
+    },
+    {
+      key: 'agentId',
+      label: 'Agent ID',
+      type: 'text',
+      required: true,
+      placeholder: 'ID do agente no GPTMaker',
+      helpText: 'ID do agente que gerencia este número de WhatsApp',
+    },
+  ],
+  features: ['media', 'read_receipts'],
+});
+
