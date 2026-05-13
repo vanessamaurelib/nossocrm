@@ -14,3 +14,5 @@ export type { MetaCloudCredentials, MetaCloudWebhookPayload } from './meta-cloud
 
 export { EvolutionWhatsAppProvider } from './evolution.provider';
 export type { EvolutionCredentials, EvolutionWebhookPayload } from './evolution.provider';
+export { GPTMakerWhatsAppProvider } from './gptmaker.provider';
+export type { GPTMakerCredentials } from './gptmaker.provider';
