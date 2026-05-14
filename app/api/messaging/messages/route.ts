@@ -120,7 +120,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Fire-and-forget: send to provider without blocking the response.
+    // Aguarda envio antes de responder (Vercel Hobby mata background tasks)
     // Uses createStaticAdminClient (service role, no request context needed)
     // because the standard createClient depends on next/headers which is
     // unavailable after the response has been sent.
@@ -128,7 +128,7 @@ export async function POST(request: NextRequest) {
     const messageId = dbMessage.id;
     const channelId = channel.id;
 
-    void (async () => {
+    await (async () => {
       const supabaseAdmin = createStaticAdminClient();
       try {
         await supabaseAdmin
