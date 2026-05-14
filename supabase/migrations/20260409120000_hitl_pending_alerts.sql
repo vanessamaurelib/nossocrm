@@ -171,35 +171,7 @@ COMMENT ON FUNCTION public.expire_old_pending_advances() IS
   'Expira ai_pending_stage_advances que ultrapassaram o tempo limite.
    Retorna contagem de registros expirados.';
 
--- ============================================================================
--- 5. pg_cron Jobs (se extensão disponível)
--- ============================================================================
--- Jobs para:
--- - Trigger alerts a cada 6 horas
--- - Expire old records a cada 12 horas
 
--- Verificar se pg_cron está disponível
-DO $$
-BEGIN
-  -- Job 1: trigger_hitl_alerts a cada 6 horas (00:00, 06:00, 12:00, 18:00 UTC)
-  PERFORM cron.schedule(
-    'hitl-pending-alerts',
-    '0 */6 * * *',
-    'SELECT public.trigger_hitl_alerts();'
-  );
-  RAISE NOTICE 'Created cron job: hitl-pending-alerts (every 6 hours)';
-
-  -- Job 2: expire_old_pending_advances a cada 12 horas
-  PERFORM cron.schedule(
-    'expire-hitl-pending',
-    '0 */12 * * *',
-    'SELECT public.expire_old_pending_advances();'
-  );
-  RAISE NOTICE 'Created cron job: expire-hitl-pending (every 12 hours)';
-EXCEPTION WHEN undefined_object THEN
-  RAISE NOTICE 'pg_cron extension not available. Jobs must be triggered manually.
-    Call trigger_hitl_alerts() and expire_old_pending_advances() from application code.';
-END $$;
 
 -- ============================================================================
 -- 6. RLS Policies for deal_activities (hitl_alert type)

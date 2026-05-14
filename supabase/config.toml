@@ -95,3 +95,7 @@ enabled = false
 # portanto desabilitamos a verificação de JWT.
 [functions.webhook-in]
 verify_jwt = false
+
+# Chamadas internas do Next.js (header x-internal-secret), sem JWT do usuário.
+[functions.toggle-human]
+verify_jwt = false

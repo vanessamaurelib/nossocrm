@@ -140,6 +140,8 @@ export {
   useRetryMessage,
 } from './useMessagingMessagesQuery';
 
+export { useMessagingHumanToggle, type MessagingHumanToggleAction } from './useMessagingHumanToggle';
+
 // Messaging Templates (WhatsApp HSM)
 export {
   useTemplatesQuery,

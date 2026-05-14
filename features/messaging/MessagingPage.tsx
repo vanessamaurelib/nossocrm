@@ -2,7 +2,19 @@
 
 import React, { useState, useEffect, useCallback } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
-import { MessageSquare, User, CheckCircle, MoreVertical, LinkIcon, Trash2, RotateCcw, Search } from 'lucide-react';
+import {
+  MessageSquare,
+  User,
+  CheckCircle,
+  MoreVertical,
+  LinkIcon,
+  Trash2,
+  RotateCcw,
+  Search,
+  UserRound,
+  Bot,
+  Loader2,
+} from 'lucide-react';
 import { useQueryClient } from '@tanstack/react-query';
 import { cn } from '@/lib/utils';
 import { sanitizeUrl } from '@/lib/utils/sanitize';
@@ -26,6 +38,7 @@ import {
   addPendingDeletion,
   removePendingDeletion,
 } from '@/lib/query/hooks/useConversationsQuery';
+import { useMessagingHumanToggle } from '@/lib/query/hooks/useMessagingHumanToggle';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -58,6 +71,7 @@ export function MessagingPage({ initialConversationId }: MessagingPageProps = {}
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [showSearch, setShowSearch] = useState(false);
   const [replyToMessage, setReplyToMessage] = useState<import('@/lib/messaging/types').MessagingMessage | null>(null);
+  const [humanToggleError, setHumanToggleError] = useState<string | null>(null);
 
   // Subscribe to realtime updates
   useRealtimeSyncMessaging();
@@ -70,6 +84,7 @@ export function MessagingPage({ initialConversationId }: MessagingPageProps = {}
   const { mutate: resolveConversation } = useResolveConversation();
   const { mutate: reopenConversation } = useReopenConversation();
   const { mutate: deleteConversation, isPending: isDeleting } = useDeleteConversation();
+  const humanToggle = useMessagingHumanToggle();
 
   // Handle delete conversation
   const handleDeleteConversation = useCallback(() => {
@@ -119,6 +134,10 @@ export function MessagingPage({ initialConversationId }: MessagingPageProps = {}
       markAsRead(selectedConversationId);
     }
   }, [selectedConversationId, selectedConversation, markAsRead]);
+
+  useEffect(() => {
+    setHumanToggleError(null);
+  }, [selectedConversationId]);
 
 
   // Update URL when conversation changes
@@ -173,6 +192,10 @@ export function MessagingPage({ initialConversationId }: MessagingPageProps = {}
     router.push(`/boards?contact=${contactId}`);
   }, [router]);
 
+  const isHumanTogglePending =
+    humanToggle.isPending &&
+    humanToggle.variables?.conversationId === selectedConversation?.id;
+
   return (
     <div className="h-[calc(100vh-4rem)] flex">
       {/* Conversation List */}
@@ -220,11 +243,71 @@ export function MessagingPage({ initialConversationId }: MessagingPageProps = {}
                   />
                 </div>
               </div>
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 flex-wrap justify-end">
                 <AssignmentDropdown
                   conversationId={selectedConversation.id}
                   assignedUserId={selectedConversation.assignedUserId}
                 />
+                {selectedConversation.channelProvider === 'gptmaker' && (
+                  <>
+                    <button
+                      type="button"
+                      disabled={isHumanTogglePending}
+                      onClick={() => {
+                        setHumanToggleError(null);
+                        humanToggle.mutate(
+                          { conversationId: selectedConversation.id, action: 'start-human' },
+                          {
+                            onSuccess: () => setHumanToggleError(null),
+                            onError: (e) => setHumanToggleError(e.message),
+                          }
+                        );
+                      }}
+                      className={cn(
+                        'inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium rounded-lg border transition-colors',
+                        'border-slate-200 dark:border-white/10 text-slate-700 dark:text-slate-200',
+                        'hover:bg-slate-100 dark:hover:bg-white/5',
+                        'disabled:opacity-50 disabled:pointer-events-none'
+                      )}
+                      title="Pausa o agente IA no GPTMaker para você responder manualmente"
+                    >
+                      {isHumanTogglePending && humanToggle.variables?.action === 'start-human' ? (
+                        <Loader2 className="w-3.5 h-3.5 animate-spin shrink-0" />
+                      ) : (
+                        <UserRound className="w-3.5 h-3.5 shrink-0" />
+                      )}
+                      Assumir atendimento
+                    </button>
+                    <button
+                      type="button"
+                      disabled={isHumanTogglePending}
+                      onClick={() => {
+                        setHumanToggleError(null);
+                        humanToggle.mutate(
+                          { conversationId: selectedConversation.id, action: 'stop-human' },
+                          {
+                            onSuccess: () => setHumanToggleError(null),
+                            onError: (e) => setHumanToggleError(e.message),
+                          }
+                        );
+                      }}
+                      className={cn(
+                        'inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium rounded-lg border transition-colors',
+                        'border-slate-200 dark:border-white/10 text-slate-700 dark:text-slate-200',
+                        'hover:bg-slate-100 dark:hover:bg-white/5',
+                        'disabled:opacity-50 disabled:pointer-events-none'
+                      )}
+                      title="Reativa o agente IA no GPTMaker"
+                    >
+                      {isHumanTogglePending && humanToggle.variables?.action === 'stop-human' ? (
+                        <Loader2 className="w-3.5 h-3.5 animate-spin shrink-0" />
+                      ) : (
+                        <Bot className="w-3.5 h-3.5 shrink-0" />
+                      )}
+                      Devolver pro agente
+                    </button>
+                  </>
+                )}
                 <button
                   type="button"
                   onClick={() => setShowSearch((v) => !v)}
@@ -297,6 +380,13 @@ export function MessagingPage({ initialConversationId }: MessagingPageProps = {}
                 </DropdownMenu>
               </div>
             </div>
+            {humanToggleError && (
+              <div className="px-4 py-1.5 bg-red-50 dark:bg-red-950/40 border-b border-red-100 dark:border-red-900/50">
+                <p className="text-xs text-red-700 dark:text-red-300" role="alert">
+                  {humanToggleError}
+                </p>
+              </div>
+            )}
 
             {/* Search Bar */}
             {showSearch && (
