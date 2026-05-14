@@ -129,9 +129,12 @@ async sendMessage(params: SendMessageParams): Promise<SendMessageResult> {
     const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
     const proxyUrl = `${supabaseUrl}/functions/v1/send-message`;
 
-    const response = await fetch(proxyUrl, {
+const response = await fetch(proxyUrl, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 
+        'Content-Type': 'application/json',
+        'x-internal-secret': process.env.INTERNAL_SECRET ?? '',
+      },
       body: JSON.stringify({
         chatId,
         message: text,
