@@ -42,6 +42,7 @@ export function useMessages(conversationId: string | undefined) {
         .from('messaging_messages')
         .select('*')
         .eq('conversation_id', conversationId!)
+        .order('sent_at', { ascending: true })
         .order('created_at', { ascending: true })
         .order('id', { ascending: true })
         .limit(200); // Limit to last 200 messages for performance
@@ -71,7 +72,8 @@ export function useMessagesInfinite(conversationId: string | undefined) {
         .from('messaging_messages')
         .select('*')
         .eq('conversation_id', conversationId!)
-        .order('created_at', { ascending: false }) // Newest first for pagination
+        .order('sent_at', { ascending: false }) // Newest first for pagination
+        .order('created_at', { ascending: false })
         .order('id', { ascending: false })
         .limit(PAGE_SIZE);
 
