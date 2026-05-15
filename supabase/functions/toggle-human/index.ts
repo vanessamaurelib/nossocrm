@@ -5,8 +5,11 @@
 // CRM (API Route) chama:
 //   POST https://[projeto].supabase.co/functions/v1/toggle-human
 //   Headers: x-internal-secret
-//   Body: { chatId, apiKey, action: "start-human" | "stop-human" }
+//   Body: { chatId, action: "start-human" | "stop-human" }
+//   API Key: lida do Supabase Vault (gptmaker_api_key)
 // =============================================================================
+
+import { getGptmakerApiKey } from '../_shared/gptmaker-vault.ts';
 
 Deno.serve(async (req: Request) => {
   if (req.method !== 'POST') {
@@ -20,18 +23,18 @@ Deno.serve(async (req: Request) => {
     return new Response('Unauthorized', { status: 401 });
   }
 
-  let body: { chatId: string; apiKey: string; action: string };
+  let body: { chatId: string; action: string };
   try {
     body = await req.json();
   } catch {
     return new Response('Invalid JSON', { status: 400 });
   }
 
-  const { chatId, apiKey, action } = body;
+  const { chatId, action } = body;
 
-  if (!chatId || !apiKey || !action) {
+  if (!chatId || !action) {
     return new Response(
-      JSON.stringify({ error: 'chatId, apiKey e action são obrigatórios' }),
+      JSON.stringify({ error: 'chatId e action são obrigatórios' }),
       { status: 400, headers: { 'Content-Type': 'application/json' } },
     );
   }
@@ -43,6 +46,17 @@ Deno.serve(async (req: Request) => {
     return new Response(
       JSON.stringify({ error: 'action deve ser "start-human" ou "stop-human"' }),
       { status: 400, headers: { 'Content-Type': 'application/json' } },
+    );
+  }
+
+  let apiKey: string;
+  try {
+    apiKey = await getGptmakerApiKey();
+  } catch (error) {
+    console.error('Erro ao obter API key do Vault:', error);
+    return new Response(
+      JSON.stringify({ success: false, error: 'GPTMaker API key não configurada' }),
+      { status: 500, headers: { 'Content-Type': 'application/json' } },
     );
   }
 

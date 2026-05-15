@@ -8,36 +8,49 @@
 //
 // Endpoint chamado pelo CRM:
 //   POST https://[projeto].supabase.co/functions/v1/send-message
-//   Body: { chatId, message, apiKey }
-//
+//   Headers: x-internal-secret
+//   Body: { chatId, message }
+//   API Key: lida do Supabase Vault (gptmaker_api_key)
 // =============================================================================
+
+import { getGptmakerApiKey } from '../_shared/gptmaker-vault.ts';
 
 Deno.serve(async (req: Request) => {
   if (req.method !== 'POST') {
     return new Response('Method not allowed', { status: 405 });
   }
 
-// Validação via secret no header
   const secret = req.headers.get('x-internal-secret');
   const expectedSecret = Deno.env.get('INTERNAL_SECRET');
-  
+
   if (!secret || secret !== expectedSecret) {
     return new Response('Unauthorized', { status: 401 });
   }
 
-  let body: { chatId: string; message: string; apiKey: string };
+  let body: { chatId: string; message: string };
   try {
     body = await req.json();
   } catch {
     return new Response('Invalid JSON', { status: 400 });
   }
 
-  const { chatId, message, apiKey } = body;
+  const { chatId, message } = body;
 
-  if (!chatId || !message || !apiKey) {
+  if (!chatId || !message) {
     return new Response(
-      JSON.stringify({ error: 'chatId, message e apiKey são obrigatórios' }),
+      JSON.stringify({ error: 'chatId e message são obrigatórios' }),
       { status: 400, headers: { 'Content-Type': 'application/json' } }
+    );
+  }
+
+  let apiKey: string;
+  try {
+    apiKey = await getGptmakerApiKey();
+  } catch (error) {
+    console.error('Erro ao obter API key do Vault:', error);
+    return new Response(
+      JSON.stringify({ success: false, error: 'GPTMaker API key não configurada' }),
+      { status: 500, headers: { 'Content-Type': 'application/json' } }
     );
   }
 

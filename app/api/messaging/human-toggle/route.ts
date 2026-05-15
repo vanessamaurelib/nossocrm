@@ -1,13 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
-import type { GPTMakerCredentials } from '@/lib/messaging/providers/whatsapp/gptmaker.provider';
 
 type HumanToggleAction = 'start-human' | 'stop-human';
 
 type ChannelRow = {
   id: string;
   provider: string;
-  credentials: Record<string, unknown>;
 };
 
 export async function POST(request: NextRequest) {
@@ -51,8 +49,7 @@ export async function POST(request: NextRequest) {
         external_contact_id,
         channel:messaging_channels!channel_id (
           id,
-          provider,
-          credentials
+          provider
         )
       `)
       .eq('id', conversationId)
@@ -69,12 +66,6 @@ export async function POST(request: NextRequest) {
         { message: 'Ação disponível apenas para canais GPTMaker' },
         { status: 400 },
       );
-    }
-
-    const credentials = channel.credentials as unknown as GPTMakerCredentials;
-    const apiKey = credentials?.apiKey;
-    if (!apiKey) {
-      return NextResponse.json({ message: 'API Key do canal não configurada' }, { status: 400 });
     }
 
     const chatId = conversation.external_contact_id as string;
@@ -98,7 +89,6 @@ export async function POST(request: NextRequest) {
       },
       body: JSON.stringify({
         chatId,
-        apiKey,
         action: action as HumanToggleAction,
       }),
     });

@@ -97,5 +97,8 @@ enabled = false
 verify_jwt = false
 
 # Chamadas internas do Next.js (header x-internal-secret), sem JWT do usuário.
+[functions.send-message]
+verify_jwt = false
+
 [functions.toggle-human]
 verify_jwt = false

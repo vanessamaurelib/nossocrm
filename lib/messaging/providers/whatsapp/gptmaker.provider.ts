@@ -19,7 +19,6 @@ import type {
   SendMessageParams,
   SendMessageResult,
   WebhookHandlerResult,
-  MessageContent,
   TextContent,
 } from '../../types';
 
@@ -28,30 +27,13 @@ import type {
 // =============================================================================
 
 /**
- * Credenciais do GPTMaker.
- * Configuradas no campo `credentials` do canal no Supabase.
+ * Credenciais do GPTMaker (por canal).
+ * A API Key global fica no Supabase Vault (gptmaker_api_key).
  */
 export interface GPTMakerCredentials {
-  /** API Key do GPTMaker (Bearer token) */
-  apiKey: string;
   /** ID do agente no GPTMaker */
   agentId: string;
 }
-
-/**
- * Resposta da API de envio de mensagem do GPTMaker.
- */
-interface GPTMakerSendResponse {
-  success?: boolean;
-  messageId?: string;
-  error?: string;
-}
-
-// =============================================================================
-// CONSTANTES
-// =============================================================================
-
-const GPTMAKER_API_URL = 'https://api.gptmaker.ai/v2';
 
 // =============================================================================
 // PROVIDER
@@ -61,7 +43,6 @@ export class GPTMakerWhatsAppProvider extends BaseChannelProvider {
   readonly channelType: ChannelType = 'whatsapp';
   readonly providerName = 'gptmaker';
 
-  private apiKey: string = '';
   private agentId: string = '';
 
   // ---------------------------------------------------------------------------
@@ -69,13 +50,10 @@ export class GPTMakerWhatsAppProvider extends BaseChannelProvider {
   // ---------------------------------------------------------------------------
 
   async initialize(config: ProviderConfig): Promise<void> {
-    // GPTMaker não exige credenciais obrigatórias pra validar no super
-    // pois o canal pode ter credentials vazias inicialmente
     this.config = config;
     this.isInitialized = true;
 
     const credentials = config.credentials as unknown as GPTMakerCredentials;
-    this.apiKey = credentials?.apiKey ?? '';
     this.agentId = credentials?.agentId ?? '';
 
     this.log('info', 'GPTMaker provider initialized', { agentId: this.agentId });
@@ -90,8 +68,8 @@ export class GPTMakerWhatsAppProvider extends BaseChannelProvider {
   // ---------------------------------------------------------------------------
 
   async getStatus(): Promise<ConnectionStatusResult> {
-    if (!this.apiKey) {
-      return { status: 'error', message: 'API Key não configurada' };
+    if (!this.agentId) {
+      return { status: 'error', message: 'Agent ID não configurado' };
     }
     return { status: 'connected', message: 'Conectado ao GPTMaker' };
   }
@@ -111,58 +89,56 @@ export class GPTMakerWhatsAppProvider extends BaseChannelProvider {
    *
    * Onde `chatId` = contextId = external_contact_id da conversa.
    */
-async sendMessage(params: SendMessageParams): Promise<SendMessageResult> {
-  const { to, content } = params;
+  async sendMessage(params: SendMessageParams): Promise<SendMessageResult> {
+    const { to, content } = params;
 
-  try {
-    if (content.type !== 'text') {
+    try {
+      if (content.type !== 'text') {
+        return this.errorResult(
+          'UNSUPPORTED_CONTENT',
+          `Tipo de conteúdo não suportado pelo GPTMaker: ${content.type}`
+        );
+      }
+
+      const text = (content as TextContent).text;
+      const chatId = to;
+
+      const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+      const proxyUrl = `${supabaseUrl}/functions/v1/send-message`;
+
+      const response = await fetch(proxyUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-internal-secret': process.env.INTERNAL_SECRET ?? '',
+        },
+        body: JSON.stringify({
+          chatId,
+          message: text,
+        }),
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        return this.errorResult('PROXY_ERROR', `Proxy retornou erro ${response.status}: ${errorText}`);
+      }
+
+      const data = await response.json() as { success: boolean; data?: { messageId?: string }; error?: string };
+
+      if (!data.success) {
+        return this.errorResult('API_ERROR', data.error ?? 'Erro desconhecido do GPTMaker');
+      }
+
+      return this.successResult(data.data?.messageId ?? `gptmaker-${Date.now()}`);
+    } catch (error) {
+      this.log('error', 'Falha ao enviar mensagem', { error, to });
       return this.errorResult(
-        'UNSUPPORTED_CONTENT',
-        `Tipo de conteúdo não suportado pelo GPTMaker: ${content.type}`
+        'REQUEST_FAILED',
+        error instanceof Error ? error.message : 'Erro desconhecido',
+        true
       );
     }
-
-    const text = (content as TextContent).text;
-    const chatId = to;
-
-    // Chama Edge Function do Supabase como proxy (evita ETIMEDOUT do Vercel)
-    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-    const proxyUrl = `${supabaseUrl}/functions/v1/send-message`;
-
-const response = await fetch(proxyUrl, {
-      method: 'POST',
-      headers: { 
-        'Content-Type': 'application/json',
-        'x-internal-secret': process.env.INTERNAL_SECRET ?? '',
-      },
-      body: JSON.stringify({
-        chatId,
-        message: text,
-        apiKey: this.apiKey,
-      }),
-    });
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      return this.errorResult('PROXY_ERROR', `Proxy retornou erro ${response.status}: ${errorText}`);
-    }
-
-    const data = await response.json() as { success: boolean; data?: { messageId?: string }; error?: string };
-
-    if (!data.success) {
-      return this.errorResult('API_ERROR', data.error ?? 'Erro desconhecido do GPTMaker');
-    }
-
-    return this.successResult(data.data?.messageId ?? `gptmaker-${Date.now()}`);
-  } catch (error) {
-    this.log('error', 'Falha ao enviar mensagem', { error, to });
-    return this.errorResult(
-      'REQUEST_FAILED',
-      error instanceof Error ? error.message : 'Erro desconhecido',
-      true
-    );
   }
-}
 
   // ---------------------------------------------------------------------------
   // Webhook
@@ -193,14 +169,6 @@ const response = await fetch(proxyUrl, {
   validateConfig(config: ProviderConfig): ValidationResult {
     const errors: ValidationError[] = [];
     const credentials = config.credentials as unknown as GPTMakerCredentials;
-
-    if (!credentials?.apiKey) {
-      errors.push({
-        field: 'credentials.apiKey',
-        message: 'API Key do GPTMaker é obrigatória',
-        code: 'REQUIRED',
-      });
-    }
 
     if (!credentials?.agentId) {
       errors.push({

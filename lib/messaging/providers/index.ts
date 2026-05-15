@@ -271,20 +271,13 @@ registerProvider({
   description: 'WhatsApp via GPTMaker (API oficial Meta)',
   configFields: [
     {
-      key: 'apiKey',
-      label: 'API Key do GPTMaker',
-      type: 'password',
-      required: true,
-      placeholder: 'sua-api-key',
-      helpText: 'Encontre em app.gptmaker.ai > Configurações > API',
-    },
-    {
       key: 'agentId',
       label: 'Agent ID',
       type: 'text',
       required: true,
       placeholder: 'ID do agente no GPTMaker',
-      helpText: 'ID do agente que gerencia este número de WhatsApp',
+      helpText:
+        'ID do agente que gerencia este número de WhatsApp. A API Key do GPTMaker é configurada no Vault do projeto Supabase.',
     },
   ],
   features: ['media', 'read_receipts'],
