@@ -102,3 +102,5 @@ verify_jwt = false
 
 [functions.toggle-human]
 verify_jwt = false
+[functions.webhook-messages]
+verify_jwt = false

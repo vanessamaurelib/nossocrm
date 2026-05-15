@@ -49,13 +49,16 @@ Deno.serve(async (req: Request) => {
   }
 
 // Validação via secret na URL
-  const url = new URL(req.url);
-  const secret = url.searchParams.get('secret');
-  const expectedSecret = Deno.env.get('WEBHOOK_SECRET');
-  
-  if (!secret || secret !== expectedSecret) {
-    return new Response('Unauthorized', { status: 401 });
-  }
+const url = new URL(req.url);
+const secret = url.searchParams.get('secret');
+const expectedSecret = Deno.env.get('WEBHOOK_SECRET');
+
+console.log('secret recebido (primeiros 8):', secret?.substring(0, 8));
+console.log('secret esperado (primeiros 8):', expectedSecret?.substring(0, 8));
+
+if (!secret || secret !== expectedSecret) {
+  return new Response('Unauthorized', { status: 401 });
+}
 
   // Parse do payload
   let payload: GPTMakerMessagePayload;
