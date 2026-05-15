@@ -162,6 +162,11 @@ Deno.serve(async (req: Request) => {
     // 4. Gravar mensagem
     // role 'user' = inbound (cliente → agente)
     // role 'assistant' = outbound (agente IA → cliente)
+    //
+    // Outbound pelo CRM: POST /api/messaging/messages já faz INSERT; o webhook
+    // pode chegar antes do UPDATE de external_id. Merge na linha CRM evita duplicata.
+    // Critério: outbound + external_id null + sender_type = user + últimos 30s;
+    // vários candidatos → mais recente. Sem igualdade de texto.
     // -------------------------------------------------------------------------
     const direction = payload.role === 'user' ? 'inbound' : 'outbound';
 
@@ -180,6 +185,68 @@ Deno.serve(async (req: Request) => {
       content = { type: 'document', mediaUrl: payload.documents[0], mimeType: 'application/octet-stream', fileName: 'documento' };
     }
 
+    const newMetadata = {
+      gptmaker_context_id: payload.contextId,
+      gptmaker_assistant_id: payload.assistantId,
+      channel: payload.channel,
+    };
+
+    if (direction === 'outbound') {
+      const thirtySecondsAgo = new Date(Date.now() - 30_000).toISOString();
+      const { data: crmCandidates, error: crmLookupError } = await supabase
+        .from('messaging_messages')
+        .select('id, metadata')
+        .eq('conversation_id', conversationId)
+        .eq('direction', 'outbound')
+        .is('external_id', null)
+        .eq('sender_type', 'user')
+        .gte('created_at', thirtySecondsAgo)
+        .order('created_at', { ascending: false })
+        .limit(1);
+
+      if (crmLookupError) {
+        console.error('Erro ao buscar linha CRM para merge outbound:', crmLookupError);
+        throw crmLookupError;
+      }
+
+      const crmRow = crmCandidates?.[0];
+      if (crmRow) {
+        const prevMeta = (crmRow.metadata as Record<string, unknown> | null) ?? {};
+        const { error: mergeError } = await supabase
+          .from('messaging_messages')
+          .update({
+            external_id: payload.messageId,
+            sent_at: payload.date,
+            status: 'sent',
+            sender_name: 'GPTMaker IA',
+            metadata: { ...prevMeta, ...newMetadata },
+          })
+          .eq('id', crmRow.id);
+
+        if (mergeError) {
+          console.error('Erro ao mergear mensagem outbound na linha CRM:', mergeError);
+          throw mergeError;
+        }
+
+        console.log(
+          `✅ Webhook ${payload.messageId} mergeado na linha CRM ${crmRow.id} (evita INSERT duplicado)`,
+        );
+
+        return new Response(
+          JSON.stringify({
+            success: true,
+            conversationId,
+            messageId: crmRow.id,
+            mergedFromCrmRow: true,
+          }),
+          {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          },
+        );
+      }
+    }
+
     const { data: message, error: msgError } = await supabase
       .from('messaging_messages')
       .insert({
@@ -191,11 +258,7 @@ Deno.serve(async (req: Request) => {
         status: direction === 'inbound' ? 'delivered' : 'sent',
         sender_name: payload.role === 'user' ? (payload.contactName ?? 'Cliente') : 'GPTMaker IA',
         sent_at: payload.date,
-        metadata: {
-          gptmaker_context_id: payload.contextId,
-          gptmaker_assistant_id: payload.assistantId,
-          channel: payload.channel,
-        },
+        metadata: newMetadata,
       })
       .select('id')
       .single();
