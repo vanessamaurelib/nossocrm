@@ -239,6 +239,14 @@ export function useRealtimeSync(
               // until the user manually refreshes. Direct cache injection bypasses that entirely.
               if (payload.eventType === 'INSERT') {
                 const newRecord = payload.new as Record<string, unknown>;
+                const insertedId = newRecord?.id as string | undefined;
+                // Dedupe duplicate realtime deliveries / multiple hook instances (same pattern as deals INSERT).
+                if (
+                  insertedId &&
+                  !shouldProcessInsert(`messaging_messages-insert-${insertedId}`)
+                ) {
+                  return;
+                }
                 const direction = newRecord?.direction;
                 if (direction === 'outbound') {
                   // UI sends: onMutate adds temp-*; onSuccess merges to real id.

@@ -207,10 +207,9 @@ export function useSendMessage() {
       const queryKey = queryKeys.messagingMessages.byConversation(input.conversationId);
       const infiniteQueryKey = [...queryKeys.messagingMessages.byConversation(input.conversationId), 'infinite'] as const;
 
-      await Promise.all([
-        queryClient.cancelQueries({ queryKey }),
-        queryClient.cancelQueries({ queryKey: infiniteQueryKey }),
-      ]);
+      // Cancel only the flat query — cancelling the infinite query aborts in-flight
+      // fetchNextPage and can truncate loaded older pages (TanStack Query).
+      await queryClient.cancelQueries({ queryKey });
 
       const previousMessages = queryClient.getQueryData<MessagingMessage[]>(queryKey);
       const previousInfiniteData = queryClient.getQueryData<MessagesInfiniteData>(infiniteQueryKey);
@@ -241,7 +240,7 @@ export function useSendMessage() {
       }
 
       const optimisticMessage: MessagingMessage = {
-        id: `temp-${Date.now()}`,
+        id: `temp-${crypto.randomUUID()}`,
         conversationId: input.conversationId,
         direction: 'outbound',
         contentType: input.content.type,

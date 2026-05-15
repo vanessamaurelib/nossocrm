@@ -57,9 +57,16 @@ export function MessageThread({ conversationId, presenceStatus, onReply }: Messa
   // Flatten pages into single message array (chronological order).
   // Filter out reaction messages — they are displayed as pills on the target
   // message bubble, not as standalone bubbles in the thread.
-  const messages = (data?.pages.flatMap((p) => p.messages) ?? []).filter(
-    (m) => m.contentType !== 'reaction',
-  );
+  const messages = useMemo(() => {
+    const flat = data?.pages.flatMap((p) => p.messages) ?? [];
+    const noReactions = flat.filter((m) => m.contentType !== 'reaction');
+    const seen = new Set<string>();
+    return noReactions.filter((m) => {
+      if (seen.has(m.id)) return false;
+      seen.add(m.id);
+      return true;
+    });
+  }, [data?.pages]);
 
   // Scroll to bottom on new messages (not when loading older)
   useEffect(() => {

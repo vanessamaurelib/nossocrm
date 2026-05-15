@@ -39,9 +39,24 @@ export function hasOptimisticOutboundInInfinite(
   return data?.pages.some((p) => hasOptimisticOutbound(p.messages)) ?? false;
 }
 
-/** Removes all optimistic temp messages (e.g. before adding a new one). */
-export function stripOptimisticMessages(messages: MessagingMessage[]): MessagingMessage[] {
-  return messages.filter((m) => !isOptimisticMessageId(m.id));
+/**
+ * Drops duplicate message ids across pages (first occurrence wins in flatMap order:
+ * page 0 → page 1 → …).
+ */
+export function dedupeInfiniteMessagesGlobally(
+  data: MessagesInfiniteData | undefined,
+): MessagesInfiniteData | undefined {
+  if (!data) return data;
+  const seen = new Set<string>();
+  const pages = data.pages.map((page) => ({
+    ...page,
+    messages: page.messages.filter((m) => {
+      if (seen.has(m.id)) return false;
+      seen.add(m.id);
+      return true;
+    }),
+  }));
+  return { ...data, pages };
 }
 
 /**
@@ -57,15 +72,15 @@ export function appendToNewestPage(
 
   const pages = data.pages.map((page, i) => {
     if (i !== 0) return page;
-    return { ...page, messages: dedupeMessagesById([...page.messages, message]) };
+    return { ...page, messages: [...page.messages, message] };
   });
 
-  return { ...data, pages };
+  return dedupeInfiniteMessagesGlobally({ ...data, pages });
 }
 
 /**
- * Replaces a temp message with the server row and dedupes by id across all pages.
- * Removes any other temp-* rows (e.g. Strict Mode double onMutate).
+ * Replaces one temp row with the server row and removes duplicate ids globally.
+ * Other temp-* rows stay (concurrent sends).
  */
 export function replaceOptimisticInInfinite(
   data: MessagesInfiniteData | undefined,
@@ -76,37 +91,26 @@ export function replaceOptimisticInInfinite(
 
   const pages = data.pages.map((page) => ({
     ...page,
-    messages: dedupeMessagesById(
-      page.messages
-        .filter((m) => !isOptimisticMessageId(m.id) || m.id === tempId)
-        .map((m) => (m.id === tempId ? realMessage : m)),
-    ),
+    messages: page.messages.map((m) => (m.id === tempId ? realMessage : m)),
   }));
 
-  return { ...data, pages };
+  return dedupeInfiniteMessagesGlobally({ ...data, pages });
 }
 
-/** Flat list: replace temp, strip other temps, dedupe by id. */
+/** Flat list: replace the temp id with the server row; dedupe by id. */
 export function replaceOptimisticInFlat(
   messages: MessagingMessage[] | undefined,
   tempId: string,
   realMessage: MessagingMessage,
 ): MessagingMessage[] {
-  const base = stripOptimisticMessages(messages ?? []).filter((m) => m.id !== realMessage.id);
-  const hadTemp = messages?.some((m) => m.id === tempId) ?? false;
-  if (hadTemp || !base.some((m) => m.id === realMessage.id)) {
-    return dedupeMessagesById([...base, realMessage]);
-  }
-  return dedupeMessagesById(base);
+  const list = messages ?? [];
+  return dedupeMessagesById(list.map((m) => (m.id === tempId ? realMessage : m)));
 }
 
-/** Flat list: strip temps, append optimistic, dedupe. */
+/** Flat list: append optimistic message (keep other pending temps for concurrent sends). */
 export function appendOptimisticToFlat(
   messages: MessagingMessage[] | undefined,
   optimisticMessage: MessagingMessage,
 ): MessagingMessage[] {
-  return dedupeMessagesById([
-    ...stripOptimisticMessages(messages ?? []),
-    optimisticMessage,
-  ]);
+  return dedupeMessagesById([...(messages ?? []), optimisticMessage]);
 }
