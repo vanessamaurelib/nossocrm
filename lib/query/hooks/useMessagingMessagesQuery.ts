@@ -25,6 +25,13 @@ import type {
   PaginationState,
 } from '@/lib/messaging/types';
 import { transformMessage, createTextContent } from '@/lib/messaging/types';
+import {
+  appendOptimisticToFlat,
+  appendToNewestPage,
+  replaceOptimisticInFlat,
+  replaceOptimisticInInfinite,
+  type MessagesInfiniteData,
+} from '@/lib/messaging/cache/message-query-cache';
 // NOTE: Channel router is server-only. Client code should call API endpoints.
 
 // =============================================================================
@@ -206,7 +213,7 @@ export function useSendMessage() {
       ]);
 
       const previousMessages = queryClient.getQueryData<MessagingMessage[]>(queryKey);
-      const previousInfiniteData = queryClient.getQueryData<InfiniteData<{ messages: MessagingMessage[]; nextCursor: string | null }>>(infiniteQueryKey);
+      const previousInfiniteData = queryClient.getQueryData<MessagesInfiniteData>(infiniteQueryKey);
 
       // For reactions: optimistically update the target message's metadata.reactions
       // This gives instant UI feedback without waiting for the realtime UPDATE event
@@ -224,7 +231,7 @@ export function useSendMessage() {
           };
         };
         queryClient.setQueryData<MessagingMessage[]>(queryKey, (old) => old?.map(applyReaction));
-        queryClient.setQueryData<InfiniteData<{ messages: MessagingMessage[]; nextCursor: string | null }>>(
+        queryClient.setQueryData<MessagesInfiniteData>(
           infiniteQueryKey,
           (old) => old
             ? { ...old, pages: old.pages.map(p => ({ ...p, messages: p.messages.map(applyReaction) })) }
@@ -246,23 +253,13 @@ export function useSendMessage() {
       };
 
       // Update flat query (used by useMessagingMessages)
-      queryClient.setQueryData<MessagingMessage[]>(queryKey, (old) => [
-        ...(old || []),
-        optimisticMessage,
-      ]);
+      queryClient.setQueryData<MessagingMessage[]>(queryKey, (old) =>
+        appendOptimisticToFlat(old, optimisticMessage),
+      );
 
       // Update infinite query (used by MessageThread via useMessagesInfinite)
-      // pages[0] holds the MOST RECENT messages (DB fetches desc, then reverses).
-      // New outbound messages must go to pages[0], not pages[pages.length - 1] (oldest page).
-      queryClient.setQueryData<InfiniteData<{ messages: MessagingMessage[]; nextCursor: string | null }>>(
-        infiniteQueryKey,
-        (old) => {
-          if (!old) return old;
-          const pages = [...old.pages];
-          const first = pages[0];
-          pages[0] = { ...first, messages: [...first.messages, optimisticMessage] };
-          return { ...old, pages };
-        }
+      queryClient.setQueryData<MessagesInfiniteData>(infiniteQueryKey, (old) =>
+        appendToNewestPage(old, optimisticMessage),
       );
 
       return { previousMessages, previousInfiniteData, queryKey, infiniteQueryKey, optimisticMessage };
@@ -279,27 +276,14 @@ export function useSendMessage() {
       // Reactions use optimistic metadata update (no temp message to replace)
       if (!context?.optimisticMessage) return;
 
-      const replaceOptimistic = (m: MessagingMessage) =>
-        m.id === context.optimisticMessage!.id ? message : m;
+      const tempId = context.optimisticMessage.id;
 
-      // Replace in flat query
-      queryClient.setQueryData<MessagingMessage[]>(context?.queryKey, (old) =>
-        old ? old.map(replaceOptimistic) : [message]
+      queryClient.setQueryData<MessagingMessage[]>(context.queryKey, (old) =>
+        replaceOptimisticInFlat(old, tempId, message),
       );
 
-      // Replace in infinite query
-      queryClient.setQueryData<InfiniteData<{ messages: MessagingMessage[]; nextCursor: string | null }>>(
-        context?.infiniteQueryKey,
-        (old) => {
-          if (!old) return old;
-          return {
-            ...old,
-            pages: old.pages.map((page) => ({
-              ...page,
-              messages: page.messages.map(replaceOptimistic),
-            })),
-          };
-        }
+      queryClient.setQueryData<MessagesInfiniteData>(context.infiniteQueryKey, (old) =>
+        replaceOptimisticInInfinite(old, tempId, message),
       );
     },
     onSettled: (_, _err, input) => {

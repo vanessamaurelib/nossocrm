@@ -9,7 +9,7 @@
  *   useRealtimeSync(['deals', 'activities']);  // Multiple tables
  */
 import { useEffect, useRef } from 'react';
-import { useQueryClient, type InfiniteData } from '@tanstack/react-query';
+import { useQueryClient } from '@tanstack/react-query';
 import { RealtimeChannel, RealtimePostgresChangesPayload } from '@supabase/supabase-js';
 import { supabase } from '@/lib/supabase';
 import { queryKeys, DEALS_VIEW_KEY } from '@/lib/query/queryKeys';
@@ -17,6 +17,12 @@ import type { DealView } from '@/types';
 import type { MessagingMessage } from '@/lib/messaging';
 import { transformMessage } from '@/lib/messaging/types';
 import type { DbMessagingMessage, ConversationView } from '@/lib/messaging/types';
+import {
+  appendToNewestPage,
+  hasOptimisticOutboundInInfinite,
+  messageExistsInInfinite,
+  type MessagesInfiniteData,
+} from '@/lib/messaging/cache/message-query-cache';
 import { pendingDeletionIds, removePendingDeletion } from '@/lib/query/hooks/useConversationsQuery';
 
 // Enable detailed Realtime logging in development or when DEBUG_REALTIME env var is set
@@ -218,7 +224,7 @@ export function useRealtimeSync(
 
                 // Update infinite query cache (used by MessageThread)
                 const infiniteKey = [...flatKey, 'infinite'] as const;
-                queryClient.setQueryData<InfiniteData<{ messages: MessagingMessage[]; nextCursor: string | null }>>(
+                queryClient.setQueryData<MessagesInfiniteData>(
                   infiniteKey,
                   (old) => old
                     ? { ...old, pages: old.pages.map(p => ({ ...p, messages: p.messages.map(applyPatch) })) }
@@ -235,29 +241,19 @@ export function useRealtimeSync(
                 const newRecord = payload.new as Record<string, unknown>;
                 const direction = newRecord?.direction;
                 if (direction === 'outbound') {
-                  // Check if this outbound message was already placed in cache by useSendMessage.
-                  // If it's already there (UI-sent), just refresh the conversations list.
-                  // If it's NOT there (sent from the phone/webhook), inject it like an inbound.
+                  // UI sends: onMutate adds temp-*; onSuccess merges to real id.
+                  // Skip Realtime INSERT while temp-* exists or real id is already cached.
                   const flatKey = queryKeys.messagingMessages.byConversation(conversationId);
                   const infiniteKey = [...flatKey, 'infinite'] as const;
-                  const cachedData = queryClient.getQueryData<InfiniteData<{ messages: MessagingMessage[]; nextCursor: string | null }>>(infiniteKey);
+                  const cachedData = queryClient.getQueryData<MessagesInfiniteData>(infiniteKey);
                   const messageId = newRecord.id as string;
-                  const alreadyInCache = cachedData?.pages.some((p) => p.messages.some((m) => m.id === messageId));
+                  const alreadyInCache = messageExistsInInfinite(cachedData, messageId);
+                  const pendingOptimistic = hasOptimisticOutboundInInfinite(cachedData);
 
-                  if (!alreadyInCache) {
-                    // Outbound from phone/webhook — inject into cache just like inbound
+                  if (!alreadyInCache && !pendingOptimistic) {
                     const newMessage = transformMessage(newRecord as unknown as DbMessagingMessage);
-                    queryClient.setQueryData<InfiniteData<{ messages: MessagingMessage[]; nextCursor: string | null }>>(
-                      infiniteKey,
-                      (old) => {
-                        if (!old) return old;
-                        const pages = old.pages.map((page, i) => {
-                          if (i !== old.pages.length - 1) return page;
-                          if (page.messages.some((m) => m.id === newMessage.id)) return page;
-                          return { ...page, messages: [...page.messages, newMessage] };
-                        });
-                        return { ...old, pages };
-                      }
+                    queryClient.setQueryData<MessagesInfiniteData>(infiniteKey, (old) =>
+                      appendToNewestPage(old, newMessage),
                     );
                     if (DEBUG_REALTIME) {
                       console.log('[Realtime] 📤 Outbound-from-phone injected into cache:', newMessage.id);
@@ -294,20 +290,8 @@ export function useRealtimeSync(
                 const flatKey = queryKeys.messagingMessages.byConversation(conversationId);
                 const infiniteKey = [...flatKey, 'infinite'] as const;
 
-                queryClient.setQueryData<InfiniteData<{ messages: MessagingMessage[]; nextCursor: string | null }>>(
-                  infiniteKey,
-                  (old) => {
-                    if (!old) return old;
-                    // Append to the last page (most recent messages page).
-                    // MessageThread reverses the order, so appending here is correct.
-                    const pages = old.pages.map((page, i) => {
-                      if (i !== old.pages.length - 1) return page;
-                      // Deduplicate: skip if message already in cache
-                      if (page.messages.some((m) => m.id === newMessage.id)) return page;
-                      return { ...page, messages: [...page.messages, newMessage] };
-                    });
-                    return { ...old, pages };
-                  }
+                queryClient.setQueryData<MessagesInfiniteData>(infiniteKey, (old) =>
+                  appendToNewestPage(old, newMessage),
                 );
 
                 if (DEBUG_REALTIME) {
