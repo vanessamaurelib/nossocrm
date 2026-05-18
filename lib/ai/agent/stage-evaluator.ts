@@ -398,7 +398,7 @@ async function logStageAdvancement(
   await supabase.from('deal_activities').insert({
     deal_id: dealId,
     organization_id: organizationId,
-    type: 'stage_change',
+    type: 'ai_stage_advanced',
     description: `Estágio avançado automaticamente pelo AI Agent`,
     metadata: {
       from_stage_id: fromStageId,
