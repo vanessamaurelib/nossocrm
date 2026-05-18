@@ -1,4 +1,4 @@
-import { createClient } from '@/lib/supabase/server';
+import { createAdminClient } from '@/lib/supabase/admin';
 import { generateMeetingBriefing } from '@/lib/ai/briefing/briefing.service';
 
 export const maxDuration = 120;
@@ -26,7 +26,7 @@ export async function GET(req: Request) {
     return json({ error: 'Unauthorized' }, 401);
   }
 
-  const supabase = await createClient();
+  const supabase = createAdminClient();
 
   // Build date range: today and tomorrow (ISO dates)
   const now = new Date();

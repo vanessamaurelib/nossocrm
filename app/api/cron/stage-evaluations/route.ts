@@ -18,7 +18,7 @@
  * Protected by CRON_SECRET bearer token — only callable by Vercel Cron.
  */
 
-import { createClient } from '@/lib/supabase/server';
+import { createAdminClient } from '@/lib/supabase/admin';
 import { evaluateStageAdvancement } from '@/lib/ai/agent/stage-evaluator';
 import { buildLeadContext } from '@/lib/ai/agent/context-builder';
 import { getConversationHistory, getOrgAIConfig } from '@/lib/ai/agent/agent.service';
@@ -43,7 +43,7 @@ export async function GET(req: Request) {
     return json({ error: 'Unauthorized' }, 401);
   }
 
-  const supabase = await createClient();
+  const supabase = createAdminClient();
 
   // Claim a batch of pending evaluations atomically.
   // We update status to 'processing' before reading to avoid double-processing

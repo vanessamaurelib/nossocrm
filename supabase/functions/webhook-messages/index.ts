@@ -131,7 +131,7 @@ if (!secret || secret !== expectedSecret) {
           ignoreDuplicates: false,
         }
       )
-      .select('id')
+      .select('id, metadata')
       .single();
 
     if (convError) {
@@ -269,6 +269,29 @@ if (!secret || secret !== expectedSecret) {
     if (msgError) {
       console.error('Erro ao inserir mensagem:', msgError);
       throw msgError;
+    }
+
+    if (direction === 'inbound') {
+      try {
+        const conversationMetadata = conversation.metadata as Record<string, unknown> | null;
+        const dealId = conversationMetadata?.deal_id;
+
+        if (typeof dealId === 'string' && dealId) {
+          const { error: queueError } = await supabase
+            .from('ai_pending_evaluations')
+            .insert({
+              organization_id: organizationId,
+              conversation_id: conversationId,
+              deal_id: dealId,
+              message_id: message.id,
+              message_text: payload.message,
+            });
+
+          if (queueError) throw queueError;
+        }
+      } catch (error) {
+        console.warn('Erro ao enfileirar avaliação de estágio:', error);
+      }
     }
 
     if (direction === 'inbound') {
