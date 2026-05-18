@@ -173,13 +173,6 @@ export async function GET(req: Request) {
           conversationId: conversation_id,
         });
 
-        console.log('[Cron:stage-evaluations] Evaluation result:', {
-          success: evalResult.success,
-          advanced: evalResult.advanced,
-          error: evalResult.error,
-          requiresConfirmation: evalResult.requiresConfirmation,
-        });
-
         if (evalResult.advanced && evalResult.newStageId) {
           console.log(`[Cron:stage-evaluations] Deal advanced to stage ${evalResult.newStageId} (eval ${id})`);
         } else if (evalResult.requiresConfirmation && evalResult.pendingAdvanceId) {
