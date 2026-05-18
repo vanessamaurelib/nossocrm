@@ -154,6 +154,7 @@ export async function buildLeadContext(
       notes: dealData.ai_summary,
       created_at: dealData.created_at,
     };
+    console.log('[BuildLeadContext] deal:', JSON.stringify({ id: deal.id, stage_id: deal.stage_id, stage_name: deal.stage_name }));
   }
 
   // 5. Buscar stage config (depende do deal) — sequencial
