@@ -4,7 +4,7 @@
  * (ex: org recém-criada antes do primeiro save).
  */
 export const AI_DEFAULT_MODELS = {
-  google: 'gemini-2.0-flash',
+  google: 'gemini-2.5-flash',
 } as const;
 
 export const AI_DEFAULT_PROVIDER = 'google' as const;
