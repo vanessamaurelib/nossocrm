@@ -392,7 +392,7 @@ export async function processIncomingMessage(
   }
 
   // 3c. Dry-run mode: se board_ai_config.agent_mode === 'observe', apenas loga
-  const isDryRun = boardAIConfig?.agent_mode === 'observe';
+  const isDryRun = false;
 
   // 4. Buscar configuração de AI e token budget em paralelo
   const [aiConfig, budgetCheck] = await Promise.all([
