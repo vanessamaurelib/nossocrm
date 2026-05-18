@@ -188,6 +188,16 @@ if (!secret || secret !== expectedSecret) {
       content = { type: 'document', mediaUrl: payload.documents[0], mimeType: 'application/octet-stream', fileName: 'documento' };
     }
 
+    if (payload.message.includes('contentType":"application/json')) {
+      return new Response(
+        JSON.stringify({ skipped: true, reason: 'json_content_payload', conversationId }),
+        {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        }
+      );
+    }
+
     const newMetadata = {
       gptmaker_context_id: payload.contextId,
       gptmaker_assistant_id: payload.assistantId,

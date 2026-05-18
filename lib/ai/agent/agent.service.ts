@@ -296,6 +296,16 @@ export async function processIncomingMessage(
     boardAIConfig = await getBoardAIConfig(supabase, deal.board_id);
   }
 
+  if (boardAIConfig?.agent_mode === 'observe') {
+    return {
+      success: true,
+      decision: {
+        action: 'skipped',
+        reason: 'observe mode',
+      },
+    };
+  }
+
   // 2c. Circuit breaker: verificar erros consecutivos
   if (boardAIConfig) {
     const cb = await getCircuitBreakerState(
