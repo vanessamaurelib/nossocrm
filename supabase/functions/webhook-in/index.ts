@@ -31,7 +31,7 @@ type LeadPayload = {
   /** Email do contato */
   email?: string;
   /** Telefone do contato */
-  phone?: string;
+  phone?: string | number;
   source?: string;
   notes?: string;
   /** Nome da empresa (cliente) */
@@ -82,9 +82,11 @@ function getSourceIdFromPath(req: Request): string | null {
   return parts[idx + 1] ?? null;
 }
 
-function normalizePhone(phone?: string) {
-  if (!phone) return null;
-  const cleaned = phone.trim();
+function normalizePhone(phone: unknown) {
+  if (typeof phone !== "string" && typeof phone !== "number") return null;
+  if (typeof phone === "number" && !Number.isFinite(phone)) return null;
+
+  const cleaned = String(phone).trim();
   return cleaned || null;
 }
 
@@ -200,7 +202,7 @@ Deno.serve(async (req) => {
 
   const leadName = getContactName(payload);
   const leadEmail = payload.email?.trim()?.toLowerCase() || null;
-  const leadPhone = normalizePhone(payload.phone || undefined);
+  const leadPhone = normalizePhone(payload.phone);
   const externalEventId = payload.external_event_id?.trim() || null;
   const companyName = getCompanyName(payload);
   const dealTitleFromPayload = getDealTitle(payload);
@@ -351,6 +353,21 @@ Deno.serve(async (req) => {
     }
   }
 
+  if (contactId && leadPhone) {
+    try {
+      const { error: linkConversationErr } = await supabase
+        .from("messaging_conversations")
+        .update({ contact_id: contactId })
+        .eq("organization_id", source.organization_id)
+        .like("external_contact_id", `%-${leadPhone}`)
+        .is("contact_id", null);
+
+      if (linkConversationErr) throw linkConversationErr;
+    } catch (err) {
+      console.warn("Falha ao vincular conversa ao contato", err);
+    }
+  }
+
   // 3) Deal (cadastro/upsert):
   // - Se já existir um deal "em aberto" do mesmo contato no mesmo board, atualiza em vez de criar outro.
   // - Se não existir (ou não tiver contato), cria.
@@ -431,6 +448,34 @@ Deno.serve(async (req) => {
     if (dealErr) return json(500, { error: "Falha ao criar deal", details: dealErr.message });
     dealId = createdDeal?.id ?? null;
     dealAction = "created";
+  }
+
+  if (dealId && leadPhone) {
+    try {
+      const { data: conversations, error: findConversationsErr } = await supabase
+        .from("messaging_conversations")
+        .select("id, metadata")
+        .eq("organization_id", source.organization_id)
+        .like("external_contact_id", `%-${leadPhone}`);
+
+      if (findConversationsErr) throw findConversationsErr;
+
+      for (const conversation of conversations ?? []) {
+        const metadata =
+          conversation.metadata && typeof conversation.metadata === "object" && !Array.isArray(conversation.metadata)
+            ? conversation.metadata as Record<string, unknown>
+            : {};
+
+        const { error: updateConversationErr } = await supabase
+          .from("messaging_conversations")
+          .update({ metadata: { ...metadata, deal_id: dealId } })
+          .eq("id", conversation.id);
+
+        if (updateConversationErr) throw updateConversationErr;
+      }
+    } catch (err) {
+      console.warn("Falha ao vincular deal à conversa", err);
+    }
   }
 
   // Atualiza auditoria (best-effort)

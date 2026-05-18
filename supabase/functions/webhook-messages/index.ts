@@ -168,7 +168,7 @@ if (!secret || secret !== expectedSecret) {
     //
     // Outbound pelo CRM: POST /api/messaging/messages já faz INSERT; o webhook
     // pode chegar antes do UPDATE de external_id. Merge na linha CRM evita duplicata.
-    // Critério: outbound + external_id null + sender_type = user + últimos 30s;
+    // Critério: outbound + external_id null ou gptmaker-* + sender_type = user + últimos 30s;
     // vários candidatos → mais recente. Sem igualdade de texto.
     // -------------------------------------------------------------------------
     const direction = payload.role === 'user' ? 'inbound' : 'outbound';
@@ -201,7 +201,7 @@ if (!secret || secret !== expectedSecret) {
         .select('id, metadata')
         .eq('conversation_id', conversationId)
         .eq('direction', 'outbound')
-        .is('external_id', null)
+        .or('external_id.is.null,external_id.like.gptmaker-%')
         .eq('sender_type', 'user')
         .gte('created_at', thirtySecondsAgo)
         .order('created_at', { ascending: false })
@@ -269,6 +269,37 @@ if (!secret || secret !== expectedSecret) {
     if (msgError) {
       console.error('Erro ao inserir mensagem:', msgError);
       throw msgError;
+    }
+
+    if (direction === 'inbound') {
+      try {
+        const appUrl = Deno.env.get('CRM_APP_URL');
+        const internalSecret = Deno.env.get('INTERNAL_API_SECRET');
+
+        if (!appUrl || !internalSecret) {
+          console.warn('CRM_APP_URL ou INTERNAL_API_SECRET ausente; pulando processamento AI');
+        } else {
+          const response = await fetch(`${appUrl}/api/messaging/ai/process`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'X-Internal-Secret': internalSecret,
+            },
+            body: JSON.stringify({
+              conversationId,
+              organizationId,
+              messageId: message.id,
+              messageText: payload.message,
+            }),
+          });
+
+          if (!response.ok) {
+            console.warn('Falha ao acionar processamento AI:', response.status, await response.text());
+          }
+        }
+      } catch (error) {
+        console.warn('Erro ao acionar processamento AI:', error);
+      }
     }
 
     console.log(`✅ Mensagem ${payload.messageId} processada → conversa ${conversationId}`);

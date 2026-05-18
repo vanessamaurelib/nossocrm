@@ -48,14 +48,30 @@ export async function GET(req: Request) {
   // Claim a batch of pending evaluations atomically.
   // We update status to 'processing' before reading to avoid double-processing
   // across concurrent cron invocations (Vercel may overlap on long queues).
-  const { data: claimed, error: claimError } = await supabase
+  const { data: pendingRows, error: claimSelectError } = await supabase
     .from('ai_pending_evaluations')
-    .update({ status: 'processing' })
+    .select('id')
     .eq('status', 'pending')
     .lt('attempts', MAX_ATTEMPTS)
     .order('created_at', { ascending: true })
-    .limit(BATCH_SIZE)
-    .select('id, organization_id, conversation_id, deal_id, message_id, message_text');
+    .limit(BATCH_SIZE);
+
+  if (claimSelectError) {
+    console.error('[Cron:stage-evaluations] Failed to claim batch:', claimSelectError);
+    return json({ error: 'Failed to claim evaluations' }, 500);
+  }
+
+  const pendingIds = (pendingRows ?? []).map((row) => row.id);
+
+  const { data: claimed, error: claimError } = pendingIds.length > 0
+    ? await supabase
+        .from('ai_pending_evaluations')
+        .update({ status: 'processing' })
+        .in('id', pendingIds)
+        .eq('status', 'pending')
+        .lt('attempts', MAX_ATTEMPTS)
+        .select('id, organization_id, conversation_id, deal_id, message_id, message_text')
+    : { data: [], error: null };
 
   if (claimError) {
     console.error('[Cron:stage-evaluations] Failed to claim batch:', claimError);
