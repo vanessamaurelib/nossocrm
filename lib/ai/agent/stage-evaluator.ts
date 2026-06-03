@@ -172,6 +172,8 @@ ${historyText}
 
 Avalie cada critério de avanço e decida se o lead deve avançar para o próximo estágio.`;
 
+    console.log('[DEBUG] Chamando Gemini para deal:', context.deal.id, 'estágio:', context.deal.stage_id);
+
     const result = await generateText({
       model,
       output: Output.object({
@@ -203,6 +205,8 @@ Avalie cada critério de avanço e decida se o lead deve avançar para o próxim
     }
 
     const evaluation = result.output;
+
+    console.log('[DEBUG] Resposta Gemini:', JSON.stringify(evaluation));
 
     if (!evaluation) {
       console.warn('[StageEvaluator] AI returned no structured output');

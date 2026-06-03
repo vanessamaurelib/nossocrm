@@ -313,7 +313,7 @@ Deno.serve(async (req) => {
       contactId = existing.id;
 
       const updates: Record<string, unknown> = {};
-      if (leadName && (!existing.name || existing.name === "Sem nome")) updates.name = leadName;
+      if (leadName) updates.name = leadName;
       if (leadEmail && !existing.email) updates.email = leadEmail;
       if (leadPhone && !existing.phone) updates.phone = leadPhone;
       if (companyName) updates.company_name = companyName;

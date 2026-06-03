@@ -173,6 +173,8 @@ export async function GET(req: Request) {
           conversationId: conversation_id,
         });
 
+        console.log('[DEBUG] evalResult:', JSON.stringify(evalResult));
+
         if (evalResult.advanced && evalResult.newStageId) {
           console.log(`[Cron:stage-evaluations] Deal advanced to stage ${evalResult.newStageId} (eval ${id})`);
         } else if (evalResult.requiresConfirmation && evalResult.pendingAdvanceId) {

@@ -68,6 +68,20 @@ if (!secret || secret !== expectedSecret) {
     return new Response('Invalid JSON', { status: 400 });
   }
 
+  if ((payload.role as string) === 'tool') {
+    return new Response(
+      JSON.stringify({ skipped: true, reason: 'tool_response' }),
+      { status: 200, headers: { 'Content-Type': 'application/json' } }
+    );
+  }
+
+  if (!payload.message && payload.images.length === 0 && payload.audios.length === 0 && payload.documents.length === 0) {
+    return new Response(
+      JSON.stringify({ skipped: true, reason: 'empty_message' }),
+      { status: 200, headers: { 'Content-Type': 'application/json' } }
+    );
+  }
+
   // Ignorar mensagens de treino (canal TRAINING = testes pelo painel)
   if (payload.channel === 'TRAINING') {
     console.log('Ignorando mensagem de canal TRAINING');
@@ -142,27 +156,127 @@ if (!secret || secret !== expectedSecret) {
     const conversationId = conversation.id;
 
     // -------------------------------------------------------------------------
-    // 3. Vincular ao contato do CRM (se existir pelo telefone)
+    // 3. Garantir contato no CRM (auto-cadastro de lead inbound)
     // -------------------------------------------------------------------------
-    if (contactPhone && !conversation) {
-      const { data: contact } = await supabase
+    if (payload.role === 'user' && contactPhone) {
+      let contactId: string | null = null;
+
+      const { data: existingContact, error: contactLookupError } = await supabase
         .from('contacts')
         .select('id')
         .eq('organization_id', organizationId)
         .eq('phone', contactPhone)
+        .is('deleted_at', null)
         .maybeSingle();
 
-      if (contact) {
-        await supabase
-          .from('messaging_conversations')
-          .update({ contact_id: contact.id })
-          .eq('id', conversationId)
-          .is('contact_id', null); // só atualiza se ainda não vinculado
+      if (contactLookupError) {
+        console.error('Erro ao buscar contato:', contactLookupError);
+        throw contactLookupError;
+      }
+
+      if (existingContact) {
+        contactId = existingContact.id;
+      } else {
+        const { data: createdContact, error: createContactError } = await supabase
+          .from('contacts')
+          .insert({
+            name: payload.contactName ?? 'Novo Lead',
+            phone: contactPhone,
+            organization_id: organizationId,
+            source: 'gptmaker',
+          })
+          .select('id')
+          .single();
+
+        if (createContactError) {
+          console.error('Erro ao criar contato:', createContactError);
+          throw createContactError;
+        }
+
+        contactId = createdContact.id;
+        console.log(`Contato auto-cadastrado (${contactPhone}): ${contactId}`);
+      }
+
+      const { error: linkError } = await supabase
+        .from('messaging_conversations')
+        .update({ contact_id: contactId })
+        .eq('id', conversationId)
+        .is('contact_id', null);
+
+      if (linkError) {
+        console.error('Erro ao vincular conversa ao contato:', linkError);
+      }
+
+      // -----------------------------------------------------------------------
+      // 4. Garantir deal no primeiro board da organização (só cria se contato ainda não tem deal)
+      // -----------------------------------------------------------------------
+      try {
+        const { data: existingDeal, error: dealLookupError } = await supabase
+          .from('deals')
+          .select('id')
+          .eq('contact_id', contactId)
+          .eq('organization_id', organizationId)
+          .is('deleted_at', null)
+          .limit(1)
+          .maybeSingle();
+
+        if (dealLookupError) {
+          console.error('Erro ao buscar deal existente:', dealLookupError);
+        } else if (!existingDeal) {
+          const { data: board, error: boardError } = await supabase
+            .from('boards')
+            .select('id')
+            .eq('organization_id', organizationId)
+            .is('deleted_at', null)
+            .order('created_at', { ascending: true })
+            .limit(1)
+            .maybeSingle();
+
+          if (boardError || !board) {
+            console.error('Nenhum board encontrado para a organização:', boardError);
+          } else {
+            const { data: firstStage, error: stageError } = await supabase
+              .from('board_stages')
+              .select('id')
+              .eq('board_id', board.id)
+              .eq('organization_id', organizationId)
+              .order('order', { ascending: true })
+              .limit(1)
+              .maybeSingle();
+
+            if (stageError || !firstStage) {
+              console.error('Primeiro estágio do board não encontrado:', stageError);
+            } else {
+              const dealTitle =
+                payload.contactName && payload.contactName.trim().length > 0
+                  ? payload.contactName
+                  : contactPhone;
+
+              const { error: createDealError } = await supabase
+                .from('deals')
+                .insert({
+                  title: dealTitle,
+                  contact_id: contactId,
+                  organization_id: organizationId,
+                  board_id: board.id,
+                  stage_id: firstStage.id,
+                });
+
+              if (createDealError) {
+                console.error('Erro ao criar deal:', createDealError);
+              } else {
+                console.log(`Deal auto-criado no board ${board.id} para contato ${contactId}`);
+              }
+            }
+          }
+        }
+      } catch (dealAutoCreateError) {
+        console.error('Falha inesperada no auto-cadastro de deal:', dealAutoCreateError);
       }
     }
 
     // -------------------------------------------------------------------------
-    // 4. Gravar mensagem
+    // 5. Gravar mensagem
     // role 'user' = inbound (cliente → agente)
     // role 'assistant' = outbound (agente IA → cliente)
     //
@@ -188,7 +302,7 @@ if (!secret || secret !== expectedSecret) {
       content = { type: 'document', mediaUrl: payload.documents[0], mimeType: 'application/octet-stream', fileName: 'documento' };
     }
 
-    if (payload.message.includes('contentType":"application/json')) {
+    if (payload.message?.includes('contentType":"application/json')) {
       return new Response(
         JSON.stringify({ skipped: true, reason: 'json_content_payload', conversationId }),
         {
@@ -269,6 +383,7 @@ if (!secret || secret !== expectedSecret) {
         content_type: contentType,
         content,
         status: direction === 'inbound' ? 'delivered' : 'sent',
+        sender_type: payload.role === 'user' ? 'user' : 'ai',
         sender_name: payload.role === 'user' ? (payload.contactName ?? 'Cliente') : 'GPTMaker IA',
         sent_at: payload.date,
         metadata: newMetadata,
