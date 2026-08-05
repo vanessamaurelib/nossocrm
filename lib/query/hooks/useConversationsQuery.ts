@@ -88,7 +88,8 @@ export function useConversations(filters?: ConversationFilters) {
             name,
             email,
             phone,
-            ai_paused
+            ai_paused,
+            sales_agent_paused
           ),
           assigned_user:profiles!assigned_user_id (
             id,
@@ -137,7 +138,14 @@ export function useConversations(filters?: ConversationFilters) {
       const result = (data || []).map((row): ConversationView => {
         const base = transform(row as DbMessagingConversation);
         const channel = row.channel as { id: string; name: string; channel_type: string; provider: string } | null;
-        const contact = row.contact as { id: string; name: string; email: string; phone: string; ai_paused?: boolean } | null;
+        const contact = row.contact as {
+          id: string;
+          name: string;
+          email: string;
+          phone: string;
+          ai_paused?: boolean;
+          sales_agent_paused?: boolean;
+        } | null;
         const assignedUser = row.assigned_user as { id: string; name: string; avatar_url: string } | null;
 
         return {
@@ -149,6 +157,7 @@ export function useConversations(filters?: ConversationFilters) {
           contactEmail: contact?.email,
           contactPhone: contact?.phone,
           contactAiPaused: contact?.ai_paused ?? false,
+          contactSalesAgentPaused: contact?.sales_agent_paused ?? false,
           assignedUserName: assignedUser?.name,
           assignedUserAvatar: assignedUser?.avatar_url,
           isWindowExpired: checkWindowExpired(base, channel?.provider),
@@ -198,7 +207,8 @@ export function useConversation(conversationId: string | undefined) {
             name,
             email,
             phone,
-            ai_paused
+            ai_paused,
+            sales_agent_paused
           ),
           assigned_user:profiles!assigned_user_id (
             id,
@@ -214,7 +224,14 @@ export function useConversation(conversationId: string | undefined) {
 
       const base = transform(data as DbMessagingConversation);
       const channel = data.channel as { id: string; name: string; channel_type: string; provider: string } | null;
-      const contact = data.contact as { id: string; name: string; email: string; phone: string; ai_paused?: boolean } | null;
+      const contact = data.contact as {
+        id: string;
+        name: string;
+        email: string;
+        phone: string;
+        ai_paused?: boolean;
+        sales_agent_paused?: boolean;
+      } | null;
       const assignedUser = data.assigned_user as { id: string; name: string; avatar_url: string } | null;
 
       return {
@@ -226,6 +243,7 @@ export function useConversation(conversationId: string | undefined) {
         contactEmail: contact?.email,
         contactPhone: contact?.phone,
         contactAiPaused: contact?.ai_paused ?? false,
+        contactSalesAgentPaused: contact?.sales_agent_paused ?? false,
         assignedUserName: assignedUser?.name,
         assignedUserAvatar: assignedUser?.avatar_url,
         isWindowExpired: checkWindowExpired(base, channel?.provider),

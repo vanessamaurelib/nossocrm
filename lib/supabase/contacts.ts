@@ -81,6 +81,8 @@ export interface DbContact {
   owner_id: string | null;
   /** Quando true, o agente de IA não responde a este contato. */
   ai_paused: boolean;
+  /** Quando true, o agente de vendas externo (n8n) não deve auto-responder. */
+  sales_agent_paused: boolean;
 }
 
 /**
@@ -134,6 +136,7 @@ const transformContact = (db: DbContact): Contact => ({
   createdAt: db.created_at,
   updatedAt: db.updated_at,
   aiPaused: db.ai_paused ?? false,
+  salesAgentPaused: db.sales_agent_paused ?? false,
 });
 
 /**
@@ -181,6 +184,7 @@ const transformContactToDb = (contact: Partial<Contact>): Partial<DbContact> => 
   if (contact.lastPurchaseDate !== undefined) db.last_purchase_date = contact.lastPurchaseDate || null;
   if (contact.totalValue !== undefined) db.total_value = contact.totalValue;
   if (contact.aiPaused !== undefined) db.ai_paused = contact.aiPaused;
+  if (contact.salesAgentPaused !== undefined) db.sales_agent_paused = contact.salesAgentPaused;
 
   return db;
 };

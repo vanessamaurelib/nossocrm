@@ -174,6 +174,8 @@ export interface Contact {
 
   /** Quando true, o agente de IA não responde a este contato em nenhum canal. */
   aiPaused?: boolean;
+  /** Quando true, o agente de vendas externo (n8n/Giulia) não deve auto-responder. */
+  salesAgentPaused?: boolean;
 }
 
 // ITEM 3: Produtos e Serviços

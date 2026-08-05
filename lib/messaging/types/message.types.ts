@@ -196,6 +196,8 @@ export interface ConversationView extends MessagingConversation {
   contactEmail?: string;
   contactPhone?: string;
   contactAiPaused?: boolean;
+  /** When true, external sales agent (n8n) is paused for this contact. */
+  contactSalesAgentPaused?: boolean;
   /** Assigned user info */
   assignedUserName?: string;
   assignedUserAvatar?: string;

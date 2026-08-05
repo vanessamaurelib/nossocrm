@@ -3,11 +3,6 @@ import { createClient } from '@/lib/supabase/server';
 
 type HumanToggleAction = 'start-human' | 'stop-human';
 
-type ChannelRow = {
-  id: string;
-  provider: string;
-};
-
 export async function POST(request: NextRequest) {
   try {
     const [supabase, body] = await Promise.all([
@@ -46,11 +41,7 @@ export async function POST(request: NextRequest) {
       .select(`
         id,
         organization_id,
-        external_contact_id,
-        channel:messaging_channels!channel_id (
-          id,
-          provider
-        )
+        contact_id
       `)
       .eq('id', conversationId)
       .eq('organization_id', orgId)
@@ -60,56 +51,28 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ message: 'Conversation not found' }, { status: 404 });
     }
 
-    const channel = conversation.channel as unknown as ChannelRow | null;
-    if (!channel || channel.provider !== 'gptmaker') {
+    const contactId = conversation.contact_id as string | null;
+    if (!contactId) {
       return NextResponse.json(
-        { message: 'Ação disponível apenas para canais GPTMaker' },
+        { message: 'Conversa sem contato vinculado' },
         { status: 400 },
       );
     }
 
-    const chatId = conversation.external_contact_id as string;
-    if (!chatId) {
-      return NextResponse.json({ message: 'Conversa sem external_contact_id' }, { status: 400 });
+    const paused = (action as HumanToggleAction) === 'start-human';
+
+    const { error: updateError } = await supabase
+      .from('contacts')
+      .update({ sales_agent_paused: paused })
+      .eq('id', contactId)
+      .eq('organization_id', orgId);
+
+    if (updateError) {
+      console.error('[human-toggle] Failed to update sales_agent_paused:', updateError.message);
+      return NextResponse.json({ message: 'Falha ao atualizar contato' }, { status: 500 });
     }
 
-    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-    const internalSecret = process.env.INTERNAL_SECRET;
-    if (!supabaseUrl || !internalSecret) {
-      console.error('[human-toggle] Missing NEXT_PUBLIC_SUPABASE_URL or INTERNAL_SECRET');
-      return NextResponse.json({ message: 'Server configuration error' }, { status: 500 });
-    }
-
-    const proxyUrl = `${supabaseUrl}/functions/v1/toggle-human`;
-    const edgeResponse = await fetch(proxyUrl, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-internal-secret': internalSecret,
-      },
-      body: JSON.stringify({
-        chatId,
-        action: action as HumanToggleAction,
-      }),
-    });
-
-    if (!edgeResponse.ok) {
-      const text = await edgeResponse.text();
-      return NextResponse.json(
-        { message: `Proxy error: ${edgeResponse.status}`, detail: text },
-        { status: 502 },
-      );
-    }
-
-    const data = (await edgeResponse.json()) as { success?: boolean; error?: string; data?: unknown };
-    if (!data.success) {
-      return NextResponse.json(
-        { message: data.error ?? 'GPTMaker retornou erro' },
-        { status: 502 },
-      );
-    }
-
-    return NextResponse.json({ success: true, data: data.data });
+    return NextResponse.json({ success: true, salesAgentPaused: paused });
   } catch (error) {
     console.error('[human-toggle]', error instanceof Error ? error.message : error);
     return NextResponse.json({ message: 'Internal server error' }, { status: 500 });
