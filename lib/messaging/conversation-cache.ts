@@ -15,6 +15,7 @@ interface CachedConversation {
   id: string;
   organization_id: string;
   external_contact_id: string;
+  contact_id: string | null;
   channel: {
     id: string;
     channel_type: string;

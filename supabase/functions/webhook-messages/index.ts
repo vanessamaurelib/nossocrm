@@ -70,14 +70,14 @@ if (!secret || secret !== expectedSecret) {
 
   if ((payload.role as string) === 'tool') {
     return new Response(
-      JSON.stringify({ skipped: true, reason: 'tool_response' }),
+      JSON.stringify({ skipped: true, reason: 'tool_response', salesAgentPaused: false }),
       { status: 200, headers: { 'Content-Type': 'application/json' } }
     );
   }
 
   if (!payload.message && payload.images.length === 0 && payload.audios.length === 0 && payload.documents.length === 0) {
     return new Response(
-      JSON.stringify({ skipped: true, reason: 'empty_message' }),
+      JSON.stringify({ skipped: true, reason: 'empty_message', salesAgentPaused: false }),
       { status: 200, headers: { 'Content-Type': 'application/json' } }
     );
   }
@@ -85,7 +85,7 @@ if (!secret || secret !== expectedSecret) {
   // Ignorar mensagens de treino (canal TRAINING = testes pelo painel)
   if (payload.channel === 'TRAINING') {
     console.log('Ignorando mensagem de canal TRAINING');
-    return new Response(JSON.stringify({ skipped: true, reason: 'TRAINING channel' }), {
+    return new Response(JSON.stringify({ skipped: true, reason: 'TRAINING channel', salesAgentPaused: false }), {
       status: 200,
       headers: { 'Content-Type': 'application/json' },
     });
@@ -100,6 +100,35 @@ if (!secret || secret !== expectedSecret) {
 
   const supabase = createClient(supabaseUrl, supabaseKey);
 
+  const externalContactId = payload.contextId;
+  const contactPhone = payload.contactPhone ?? externalContactId.split('-').pop() ?? '';
+  const contactName = payload.contactName ?? 'Desconhecido';
+  let salesAgentPaused = false;
+
+  const resolveSalesAgentPaused = async (phone: string): Promise<boolean> => {
+    if (!phone) return false;
+
+    const { data, error } = await supabase
+      .from('contacts')
+      .select('sales_agent_paused')
+      .eq('organization_id', organizationId)
+      .eq('phone', phone)
+      .is('deleted_at', null)
+      .maybeSingle();
+
+    if (error) {
+      console.error('Erro ao buscar sales_agent_paused:', error);
+      return false;
+    }
+
+    return data?.sales_agent_paused === true;
+  };
+
+  const ensureSalesAgentPaused = async () => {
+    if (salesAgentPaused || !contactPhone) return;
+    salesAgentPaused = await resolveSalesAgentPaused(contactPhone);
+  };
+
   try {
     // -------------------------------------------------------------------------
     // 1. Idempotência: verificar se messageId já foi processado
@@ -112,7 +141,8 @@ if (!secret || secret !== expectedSecret) {
 
     if (existingMessage) {
       console.log(`Mensagem ${payload.messageId} já processada, ignorando`);
-      return new Response(JSON.stringify({ skipped: true, reason: 'already processed' }), {
+      salesAgentPaused = await resolveSalesAgentPaused(contactPhone);
+      return new Response(JSON.stringify({ skipped: true, reason: 'already processed', salesAgentPaused }), {
         status: 200,
         headers: { 'Content-Type': 'application/json' },
       });
@@ -124,9 +154,6 @@ if (!secret || secret !== expectedSecret) {
     // Usamos external_contact_id = contextId pra garantir que a mesma
     // conversa do WhatsApp sempre mapeia pro mesmo registro no Supabase.
     // -------------------------------------------------------------------------
-    const externalContactId = payload.contextId;
-    const contactPhone = payload.contactPhone ?? externalContactId.split('-').pop() ?? '';
-    const contactName = payload.contactName ?? 'Desconhecido';
 
     const { data: conversation, error: convError } = await supabase
       .from('messaging_conversations')
@@ -163,7 +190,7 @@ if (!secret || secret !== expectedSecret) {
 
       const { data: existingContact, error: contactLookupError } = await supabase
         .from('contacts')
-        .select('id')
+        .select('id, sales_agent_paused')
         .eq('organization_id', organizationId)
         .eq('phone', contactPhone)
         .is('deleted_at', null)
@@ -176,6 +203,7 @@ if (!secret || secret !== expectedSecret) {
 
       if (existingContact) {
         contactId = existingContact.id;
+        salesAgentPaused = existingContact.sales_agent_paused === true;
       } else {
         const { data: createdContact, error: createContactError } = await supabase
           .from('contacts')
@@ -185,7 +213,7 @@ if (!secret || secret !== expectedSecret) {
             organization_id: organizationId,
             source: 'gptmaker',
           })
-          .select('id')
+          .select('id, sales_agent_paused')
           .single();
 
         if (createContactError) {
@@ -194,6 +222,7 @@ if (!secret || secret !== expectedSecret) {
         }
 
         contactId = createdContact.id;
+        salesAgentPaused = createdContact.sales_agent_paused === true;
         console.log(`Contato auto-cadastrado (${contactPhone}): ${contactId}`);
       }
 
@@ -206,6 +235,25 @@ if (!secret || secret !== expectedSecret) {
       if (linkError) {
         console.error('Erro ao vincular conversa ao contato:', linkError);
       }
+
+      const linkDealToConversation = async (dealId: string) => {
+        const prevMeta =
+          conversation.metadata && typeof conversation.metadata === 'object' && !Array.isArray(conversation.metadata)
+            ? (conversation.metadata as Record<string, unknown>)
+            : {};
+        const nextMeta = { ...prevMeta, deal_id: dealId };
+        const { error: metaUpdateError } = await supabase
+          .from('messaging_conversations')
+          .update({ metadata: nextMeta })
+          .eq('id', conversationId);
+
+        if (metaUpdateError) {
+          console.error('Erro ao vincular deal à conversa:', metaUpdateError);
+          return;
+        }
+
+        conversation.metadata = nextMeta;
+      };
 
       // -----------------------------------------------------------------------
       // 4. Garantir deal no primeiro board da organização (só cria se contato ainda não tem deal)
@@ -222,7 +270,12 @@ if (!secret || secret !== expectedSecret) {
 
         if (dealLookupError) {
           console.error('Erro ao buscar deal existente:', dealLookupError);
-        } else if (!existingDeal) {
+        } else if (existingDeal) {
+          const currentDealId = (conversation.metadata as Record<string, unknown> | null)?.deal_id;
+          if (typeof currentDealId !== 'string' || !currentDealId) {
+            await linkDealToConversation(existingDeal.id);
+          }
+        } else {
           const { data: board, error: boardError } = await supabase
             .from('boards')
             .select('id')
@@ -252,7 +305,7 @@ if (!secret || secret !== expectedSecret) {
                   ? payload.contactName
                   : contactPhone;
 
-              const { error: createDealError } = await supabase
+              const { data: createdDeal, error: createDealError } = await supabase
                 .from('deals')
                 .insert({
                   title: dealTitle,
@@ -260,12 +313,15 @@ if (!secret || secret !== expectedSecret) {
                   organization_id: organizationId,
                   board_id: board.id,
                   stage_id: firstStage.id,
-                });
+                })
+                .select('id')
+                .single();
 
               if (createDealError) {
                 console.error('Erro ao criar deal:', createDealError);
-              } else {
+              } else if (createdDeal?.id) {
                 console.log(`Deal auto-criado no board ${board.id} para contato ${contactId}`);
+                await linkDealToConversation(createdDeal.id);
               }
             }
           }
@@ -303,8 +359,9 @@ if (!secret || secret !== expectedSecret) {
     }
 
     if (payload.message?.includes('contentType":"application/json')) {
+      await ensureSalesAgentPaused();
       return new Response(
-        JSON.stringify({ skipped: true, reason: 'json_content_payload', conversationId }),
+        JSON.stringify({ skipped: true, reason: 'json_content_payload', conversationId, salesAgentPaused }),
         {
           status: 200,
           headers: { 'Content-Type': 'application/json' },
@@ -359,12 +416,14 @@ if (!secret || secret !== expectedSecret) {
           `✅ Webhook ${payload.messageId} mergeado na linha CRM ${crmRow.id} (evita INSERT duplicado)`,
         );
 
+        await ensureSalesAgentPaused();
         return new Response(
           JSON.stringify({
             success: true,
             conversationId,
             messageId: crmRow.id,
             mergedFromCrmRow: true,
+            salesAgentPaused,
           }),
           {
             status: 200,
@@ -452,11 +511,13 @@ if (!secret || secret !== expectedSecret) {
 
     console.log(`✅ Mensagem ${payload.messageId} processada → conversa ${conversationId}`);
 
+    await ensureSalesAgentPaused();
     return new Response(
       JSON.stringify({
         success: true,
         conversationId,
         messageId: message.id,
+        salesAgentPaused,
       }),
       {
         status: 200,

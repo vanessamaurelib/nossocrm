@@ -154,6 +154,17 @@ const PROVIDER_CONFIGS: Record<string, ProviderConfig> = {
       '4. Após salvar, configure o webhook apontando para a URL exibida',
     ],
   },
+  'whatsapp:n8n': {
+    name: 'n8n',
+    description: 'Envio via webhook n8n. URL e secret ficam nas variáveis de ambiente do servidor.',
+    official: false,
+    fields: [],
+    setupInstructions: [
+      '1. Configure N8N_SEND_WEBHOOK_URL e N8N_SEND_SECRET no ambiente da aplicação',
+      '2. Informe o nome do canal e o número de WhatsApp (identificador externo)',
+      '3. O n8n deve responder { success: true, wamid } no envio',
+    ],
+  },
   'whatsapp:meta-cloud': {
     name: 'Meta Cloud API',
     description: 'API oficial da Meta. Requer verificação de negócio e templates aprovados.',

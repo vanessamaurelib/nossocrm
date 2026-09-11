@@ -11,6 +11,33 @@ import {
 
 type ChannelInfo = { id: string; channel_type: string; provider: string };
 
+async function pauseSalesAgentBestEffort(
+  supabaseAdmin: ReturnType<typeof createStaticAdminClient>,
+  contactId: string | null,
+  organizationId: string,
+): Promise<void> {
+  if (!contactId) {
+    return;
+  }
+
+  try {
+    const { error } = await supabaseAdmin
+      .from('contacts')
+      .update({ sales_agent_paused: true })
+      .eq('id', contactId)
+      .eq('organization_id', organizationId);
+
+    if (error) {
+      console.error('[messaging/messages] failed to pause sales agent:', error.message);
+    }
+  } catch (err: unknown) {
+    console.error(
+      '[messaging/messages] failed to pause sales agent:',
+      err instanceof Error ? err.message : err,
+    );
+  }
+}
+
 export async function POST(request: NextRequest) {
   try {
     // Parallelize auth check and body parsing — no dependency between them
@@ -53,18 +80,21 @@ export async function POST(request: NextRequest) {
     // Cache is scoped to org to prevent IDOR on cache hits.
     let channel: ChannelInfo;
     let externalContactId: string;
+    let contactId: string | null;
 
     const cached = getConversationCache(conversationId, orgId);
 
     if (cached) {
       channel = cached.channel;
       externalContactId = cached.external_contact_id;
+      contactId = cached.contact_id ?? null;
     } else {
       const { data: conversation, error: convError } = await supabase
         .from('messaging_conversations')
         .select(`
           id,
           organization_id,
+          contact_id,
           external_contact_id,
           channel:messaging_channels!channel_id (
             id,
@@ -85,11 +115,13 @@ export async function POST(request: NextRequest) {
 
       channel = conversation.channel as unknown as ChannelInfo;
       externalContactId = conversation.external_contact_id;
+      contactId = conversation.contact_id;
 
       setConversationCache({
         id: conversation.id,
         organization_id: conversation.organization_id,
         external_contact_id: externalContactId,
+        contact_id: contactId,
         channel,
       });
     }
@@ -175,6 +207,9 @@ export async function POST(request: NextRequest) {
               sent_at: new Date().toISOString(),
             })
             .eq('id', messageId);
+
+          // Terapeuta responder pela tela = assumir o atendimento (não derruba o envio).
+          await pauseSalesAgentBestEffort(supabaseAdmin, contactId, orgId);
         } else {
           console.error('[messaging/messages] provider failure:', result.error);
           await supabaseAdmin
