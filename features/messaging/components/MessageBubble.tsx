@@ -184,15 +184,15 @@ const StatusIcon = memo(function StatusIcon({ status }: { status: MessageStatus 
   switch (status) {
     case 'pending':
     case 'queued':
-      return <Clock className="w-3 h-3 text-slate-400" />;
+      return <Clock className="w-3 h-3 text-amber-300" />;
     case 'sent':
-      return <Check className="w-3 h-3 text-slate-400" />;
+      return <Check className="w-3 h-3 text-white/90" />;
     case 'delivered':
-      return <CheckCheck className="w-3 h-3 text-slate-400" />;
+      return <CheckCheck className="w-3 h-3 text-white/90" />;
     case 'read':
-      return <CheckCheck className="w-3 h-3 text-blue-500" />;
+      return <CheckCheck className="w-3 h-3 text-emerald-300" />;
     case 'failed':
-      return <AlertCircle className="w-3 h-3 text-red-500" />;
+      return <AlertCircle className="w-3 h-3 text-red-300" />;
     default:
       return null;
   }
