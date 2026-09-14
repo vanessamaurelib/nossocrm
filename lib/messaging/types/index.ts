@@ -100,6 +100,7 @@ export type {
   SendMessageInput,
   UpdateConversationInput,
   ConversationFilters,
+  CloudApiWindowProvider,
 } from './message.types';
 
 export {
@@ -107,6 +108,7 @@ export {
   PRIORITY_LABELS,
   PRIORITY_COLORS,
   MESSAGE_STATUS_LABELS,
+  CLOUD_API_WINDOW_PROVIDERS,
   transformConversation,
   transformMessage,
   isWindowExpired,
