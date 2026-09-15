@@ -114,14 +114,14 @@ if (!secret || secret !== expectedSecret) {
       .eq('organization_id', organizationId)
       .eq('phone', phone)
       .is('deleted_at', null)
-      .maybeSingle();
+      .is('merged_into_id', null);
 
     if (error) {
       console.error('Erro ao buscar sales_agent_paused:', error);
       return false;
     }
 
-    return data?.sales_agent_paused === true;
+    return (data ?? []).some((row) => row.sales_agent_paused === true);
   };
 
   const ensureSalesAgentPaused = async () => {
@@ -188,22 +188,22 @@ if (!secret || secret !== expectedSecret) {
     if (payload.role === 'user' && contactPhone) {
       let contactId: string | null = null;
 
-      const { data: existingContact, error: contactLookupError } = await supabase
+      const { data: existingContacts, error: contactLookupError } = await supabase
         .from('contacts')
         .select('id, sales_agent_paused')
         .eq('organization_id', organizationId)
         .eq('phone', contactPhone)
-        .is('deleted_at', null)
-        .maybeSingle();
+        .is('deleted_at', null);
 
       if (contactLookupError) {
         console.error('Erro ao buscar contato:', contactLookupError);
         throw contactLookupError;
       }
 
+      const existingContact = existingContacts?.[0];
       if (existingContact) {
         contactId = existingContact.id;
-        salesAgentPaused = existingContact.sales_agent_paused === true;
+        salesAgentPaused = (existingContacts ?? []).some((row) => row.sales_agent_paused === true);
       } else {
         const { data: createdContact, error: createContactError } = await supabase
           .from('contacts')

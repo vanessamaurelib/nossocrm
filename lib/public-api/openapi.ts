@@ -495,6 +495,59 @@ export function getPublicApiOpenApiDocument(): OpenApiDocument {
           },
         },
       },
+      '/contacts/pause-sales-agent': {
+        post: {
+          tags: ['Contacts'],
+          summary: 'Pausar agente de vendas (n8n)',
+          description:
+            'Define `sales_agent_paused=true` em todos os contatos ativos da organização (`deleted_at` e `merged_into_id` nulos) com o telefone informado. Idempotente: se já estiver `true`, responde sucesso. Não cria contato. O telefone não é normalizado para E.164 — enviar como gravado no CRM (ex: `5511930452744`). Sempre HTTP 200 com JSON `{ success }` (401 somente se a API key for inválida).\n\nUso n8n (HTTP Request): `POST {APP_URL}/api/public/v1/contacts/pause-sales-agent` · header `X-Api-Key` · body `{ "phone": "5511930452744" }`.',
+          security: [{ ApiKeyAuth: [] }],
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  additionalProperties: false,
+                  properties: {
+                    phone: {
+                      type: 'string',
+                      description: 'Telefone como gravado em contacts.phone (ex: 5511930452744)',
+                    },
+                  },
+                  required: ['phone'],
+                },
+                examples: {
+                  default: { value: { phone: '5511930452744' } },
+                },
+              },
+            },
+          },
+          responses: {
+            200: {
+              description: 'Resultado de negócio (`success: true` ou `success: false`)',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    properties: {
+                      success: { type: 'boolean' },
+                      sales_agent_paused: { type: 'boolean' },
+                      already_paused: { type: 'boolean' },
+                      updated_count: { type: 'integer' },
+                      contact_ids: { type: 'array', items: { type: 'string' } },
+                      code: { type: 'string' },
+                      message: { type: 'string' },
+                    },
+                    required: ['success'],
+                  },
+                },
+              },
+            },
+            401: { $ref: '#/components/responses/Unauthorized' },
+          },
+        },
+      },
       '/contacts/{contactId}': {
         get: {
           tags: ['Contacts'],
