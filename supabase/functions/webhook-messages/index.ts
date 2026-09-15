@@ -42,23 +42,37 @@ interface GPTMakerMessagePayload {
 // Handler principal
 // ---------------------------------------------------------------------------
 
+function timingSafeEqual(a: string, b: string): boolean {
+  const enc = new TextEncoder();
+  const aBytes = enc.encode(a);
+  const bBytes = enc.encode(b);
+  if (aBytes.length !== bBytes.length) return false;
+  let diff = 0;
+  for (let i = 0; i < aBytes.length; i++) {
+    diff |= aBytes[i] ^ bBytes[i];
+  }
+  return diff === 0;
+}
+
 Deno.serve(async (req: Request) => {
   // Só aceita POST
   if (req.method !== 'POST') {
     return new Response('Method not allowed', { status: 405 });
   }
 
-// Validação via secret na URL
-const url = new URL(req.url);
-const secret = url.searchParams.get('secret');
-const expectedSecret = Deno.env.get('WEBHOOK_SECRET');
+  // Validação via header x-crm-secret, com fallback para ?secret= na query
+  const url = new URL(req.url);
+  const headerSecret = req.headers.get('x-crm-secret');
+  const via = headerSecret ? 'header' : 'query';
+  const providedSecret = headerSecret || url.searchParams.get('secret');
+  const expectedSecret = Deno.env.get('WEBHOOK_SECRET');
 
-console.log('secret recebido (primeiros 8):', secret?.substring(0, 8));
-console.log('secret esperado (primeiros 8):', expectedSecret?.substring(0, 8));
+  if (!providedSecret || !expectedSecret || !timingSafeEqual(providedSecret, expectedSecret)) {
+    console.log(`webhook auth failed via=${via}`);
+    return new Response('Unauthorized', { status: 401 });
+  }
 
-if (!secret || secret !== expectedSecret) {
-  return new Response('Unauthorized', { status: 401 });
-}
+  console.log(`webhook auth ok via=${via}`);
 
   // Parse do payload
   let payload: GPTMakerMessagePayload;
