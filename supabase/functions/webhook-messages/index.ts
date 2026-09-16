@@ -60,19 +60,16 @@ Deno.serve(async (req: Request) => {
     return new Response('Method not allowed', { status: 405 });
   }
 
-  // Validação via header x-crm-secret, com fallback para ?secret= na query
-  const url = new URL(req.url);
-  const headerSecret = req.headers.get('x-crm-secret');
-  const via = headerSecret ? 'header' : 'query';
-  const providedSecret = headerSecret || url.searchParams.get('secret');
+  // Validação apenas via header x-crm-secret
+  const providedSecret = req.headers.get('x-crm-secret');
   const expectedSecret = Deno.env.get('WEBHOOK_SECRET');
 
   if (!providedSecret || !expectedSecret || !timingSafeEqual(providedSecret, expectedSecret)) {
-    console.log(`webhook auth failed via=${via}`);
+    console.log('webhook auth failed');
     return new Response('Unauthorized', { status: 401 });
   }
 
-  console.log(`webhook auth ok via=${via}`);
+  console.log('webhook auth ok');
 
   // Parse do payload
   let payload: GPTMakerMessagePayload;
