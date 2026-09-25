@@ -1,0 +1,26 @@
+---
+description: Grants explícitos, RLS e policies ao criar tabela em public
+globs:
+  - supabase/migrations/**/*.sql
+  - docs/provisionamento_n8n.sql
+alwaysApply: false
+---
+
+# Grants do schema public
+
+Toda criação de tabela em `public`, seja numa migration ou em `docs/provisionamento_n8n.sql`, leva no mesmo arquivo os `GRANT` explícitos, o `ENABLE ROW LEVEL SECURITY` e as policies.
+
+- Nomear cada tabela. Não usar `GRANT ... ON ALL TABLES IN SCHEMA public`.
+- `service_role`: `select, insert, update, delete` se o servidor ou o n8n acessa a tabela.
+- `authenticated`: as operações que alguma policy da tabela permite (`TO authenticated` ou policy sem `TO`), mais as operações que o código executa com sessão de usuário, mesmo sem policy. Policy só `TO service_role` não conta. Sem `FOR`, a policy vale para select, insert, update e delete. Operação sem policy recebe o grant e um comentário no arquivo dizendo que o RLS bloqueia.
+- `anon`: nenhum grant, salvo leitura sem login justificada no mesmo arquivo.
+- Sequence: `usage, select` para as roles que fazem insert na tabela correspondente.
+- O arquivo pode rodar mais de uma vez sem erro.
+- Não reescrever migrations antigas. Tabela nova do CRM vai numa migration nova no fim da sequência. Tabela do n8n vai em `docs/provisionamento_n8n.sql`.
+
+Exemplo de operação que o código executa e nenhuma policy permite:
+
+```sql
+-- DELETE: grant concedido; bloqueado pelo RLS (policies são SELECT e UPDATE).
+GRANT SELECT, UPDATE, DELETE ON TABLE public.profiles TO authenticated;
+```
