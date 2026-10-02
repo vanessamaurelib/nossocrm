@@ -29,6 +29,11 @@
 --   blocos de preços e horários).
 --   Fora de propósito: busca vetorial (knowledge_base, search_knowledge_base,
 --   extensão vector) — tarefa 3.1d.
+--   Atualizado em 02/10/2026 (tarefa 3.10): regras de reagendamento e de nova
+--   consulta inicial na business_config, sinal usado em cobrancas.usada_em e
+--   a view business_config_runtime com as colunas novas (seção 4b). A tabela
+--   sales_agent.agendamentos, criada e removida no mesmo dia, não faz parte:
+--   as consultas ficam registradas na própria agenda Google (Decisão #25).
 --
 -- AO MUDAR A ESTRUTURA DA GIULIA
 --   Toda tabela, coluna, índice ou função nova no banco da Vanessa precisa
@@ -45,7 +50,7 @@ CREATE SCHEMA IF NOT EXISTS sales_agent;
 
 -- 2. Papel de acesso mínimo da Giulia (Decisão #11) -----------------------------
 -- PENDENTE: hoje o n8n entra no banco com o usuário postgres (administrador),
--- e não com este papel. Ver a pendência de segurança no PENDENCIAS.md.
+-- e não com este papel. Ver a tarefa 3.9 do ROADMAP.md e o bug #15.
 
 DO $do$ BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'sales_agent_api') THEN
@@ -180,6 +185,31 @@ CREATE TABLE IF NOT EXISTS sales_agent.processed_messages (
   CONSTRAINT processed_messages_status_chk CHECK ((status = ANY (ARRAY['received'::text, 'processed'::text]))),
   CONSTRAINT processed_messages_pkey PRIMARY KEY (message_id)
 );
+
+
+-- 4b. Colunas da tarefa 3.10 (02/10/2026) ---------------------------------------
+-- Acrescentadas com ALTER, e não dentro do CREATE TABLE acima, para que o
+-- arquivo também atualize um banco montado com a versão anterior dele.
+
+ALTER TABLE sales_agent.business_config
+  ADD COLUMN IF NOT EXISTS antecedencia_reagendamento_horas integer DEFAULT 24 NOT NULL,
+  ADD COLUMN IF NOT EXISTS limite_reagendamentos integer,
+  ADD COLUMN IF NOT EXISTS intervalo_nova_consulta_dias integer DEFAULT 90 NOT NULL;
+
+DO $do$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'chk_antecedencia_reagendamento' AND conrelid = 'sales_agent.business_config'::regclass) THEN
+    ALTER TABLE sales_agent.business_config ADD CONSTRAINT chk_antecedencia_reagendamento CHECK (((antecedencia_reagendamento_horas >= 0) AND (antecedencia_reagendamento_horas <= 720)));
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'chk_limite_reagendamentos' AND conrelid = 'sales_agent.business_config'::regclass) THEN
+    ALTER TABLE sales_agent.business_config ADD CONSTRAINT chk_limite_reagendamentos CHECK (((limite_reagendamentos IS NULL) OR (limite_reagendamentos >= 0)));
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'chk_intervalo_nova_consulta' AND conrelid = 'sales_agent.business_config'::regclass) THEN
+    ALTER TABLE sales_agent.business_config ADD CONSTRAINT chk_intervalo_nova_consulta CHECK (((intervalo_nova_consulta_dias >= 0) AND (intervalo_nova_consulta_dias <= 3650)));
+  END IF;
+END $do$;
+
+ALTER TABLE sales_agent.cobrancas
+  ADD COLUMN IF NOT EXISTS usada_em timestamp with time zone;
 
 
 -- 5. Chaves estrangeiras ---------------------------------------------------------
@@ -395,7 +425,10 @@ CREATE OR REPLACE VIEW sales_agent.business_config_runtime AS
     moeda,
     COALESCE(( SELECT json_agg(json_build_object('dia', h.dia_semana, 'inicio', to_char(h.hora_inicio::interval, 'HH24:MI'::text), 'fim', to_char(h.hora_fim::interval, 'HH24:MI'::text)) ORDER BY h.dia_semana, h.hora_inicio) AS json_agg
            FROM sales_agent.horarios_atendimento h
-          WHERE h.organization_id = c.organization_id), '[]'::json) AS blocos_atendimento
+          WHERE h.organization_id = c.organization_id), '[]'::json) AS blocos_atendimento,
+    antecedencia_reagendamento_horas,
+    limite_reagendamentos,
+    intervalo_nova_consulta_dias
    FROM sales_agent.business_config c;
 
 CREATE OR REPLACE TRIGGER trg_touch_business_config BEFORE UPDATE ON sales_agent.business_config FOR EACH ROW EXECUTE FUNCTION sales_agent.touch_business_config();
@@ -435,6 +468,14 @@ COMMENT ON COLUMN sales_agent.business_config.intervalo_entre_consultas_minutos 
 COMMENT ON COLUMN sales_agent.business_config.janela_maxima_dias IS 'Não oferecer horário depois de hoje + N dias. Evita agendar para daqui a seis meses.';
 
 COMMENT ON TABLE sales_agent.horarios_atendimento IS 'Blocos de atendimento por dia da semana. Duas linhas no mesmo dia = intervalo entre elas (almoço). Fonte única dos horários — a business_config não guarda mais hora_inicio/hora_fim.';
+
+COMMENT ON COLUMN sales_agent.business_config.antecedencia_reagendamento_horas IS 'A Giulia só reagenda se a consulta atual começar daqui a pelo menos N horas. Dentro do prazo, ela informa a regra e transfere para a terapeuta.';
+
+COMMENT ON COLUMN sales_agent.business_config.limite_reagendamentos IS 'Quantas vezes a mesma consulta pode ser reagendada pela Giulia. Vazio = sem limite.';
+
+COMMENT ON COLUMN sales_agent.business_config.intervalo_nova_consulta_dias IS 'A Giulia só vende nova consulta inicial se a cliente não tiver consulta marcada pela Giulia no futuro nem nos últimos N dias. Consulta recente: transfere para a terapeuta.';
+
+COMMENT ON COLUMN sales_agent.cobrancas.usada_em IS 'Quando o sinal foi usado para marcar a primeira consulta. Preenchido uma vez e nunca liberado pelo sistema: devolução, retenção ou crédito é decisão da terapeuta.';
 
 COMMENT ON COLUMN sales_agent.horarios_atendimento.dia_semana IS '1=segunda ... 7=domingo. Padrão ISO 8601 — mesmo do EXTRACT(ISODOW) do Postgres e do weekday do Luxon no nó Calcular Horarios.';
 
