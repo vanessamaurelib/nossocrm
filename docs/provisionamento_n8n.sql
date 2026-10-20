@@ -57,6 +57,10 @@
 --   fmt_motivo e fmt_sugestoes; registrar_fatos_mensagem usa a proxima_data;
 --   fatos_e_etapa devolve horarios_pedidos (horários livres do período ou
 --   dia pedido).
+--   Atualizado em 20/10/2026 (tarefa 3.18): agenda_horarios com o pedido por
+--   dia — dia da semana: a próxima ocorrência primeiro, completada pelas
+--   seguintes, sem pular nenhuma com vaga; data: só ela (sem vaga, a Giulia
+--   recebe a lista geral).
 --
 -- AO MUDAR A ESTRUTURA DA GIULIA
 --   Toda tabela, coluna, índice ou função nova no banco da Vanessa precisa
@@ -593,7 +597,9 @@ DROP FUNCTION IF EXISTS sales_agent.agenda_horarios(jsonb, text, timestamp with 
 -- horário pedido). Recebe os eventos como o Google devolve e o telefone da
 -- cliente; as consultas dela (marca giulia_telefone) não ocupam horário.
 -- Com p_filtro (período e/ou dia pedidos pela cliente), as sugestões saem só
--- desse recorte; sem nenhuma, motivo diz por quê.
+-- desse recorte; sem nenhuma, motivo diz por quê. Data pedida: só ela. Dia da
+-- semana pedido: a próxima ocorrência primeiro, completada pelas seguintes,
+-- sem pular nenhuma que tenha vaga.
 -- Devolve só dados; os textos para a Giulia ficam no workflow.
 CREATE OR REPLACE FUNCTION sales_agent.agenda_horarios(p_eventos jsonb, p_telefone text, p_inicio timestamp with time zone DEFAULT NULL::timestamp with time zone, p_agora timestamp with time zone DEFAULT now(), p_filtro jsonb DEFAULT NULL::jsonb)
  RETURNS jsonb
@@ -640,6 +646,7 @@ DECLARE
   f_per      integer;
   f_dow      integer;
   f_data     date;
+  semana     boolean;  -- pediu um dia da semana (sem data)
   -- Candidatos (todo início possível nos primeiros dias com vaga) e escolhidos
   c_t        timestamptz[] := '{}';
   c_dia      date[] := '{}';
@@ -678,6 +685,7 @@ BEGIN
       f_data := NULL;
     END;
   END IF;
+  semana := f_dow IS NOT NULL AND f_data IS NULL;
 
   -- Sugestões começam na hora cheia ou meia hora seguinte à antecedência:
   -- agora + 48 h às 13h22 vira 13h30. Evita oferecer um horário quebrado
@@ -783,7 +791,10 @@ BEGIN
           -- passos 1 e 3: o primeiro que servir; passo 2: o melhor do primeiro dia que aceita
           EXIT WHEN melhor IS NOT NULL AND (passo <> 2 OR c_dia[i] <> c_dia[melhor]);
           CONTINUE WHEN c_t[i] = ANY (s_t)
-                     OR (passo = 1 AND c_per[i] = ANY (s_per));
+                     OR (passo = 1 AND c_per[i] = ANY (s_per))
+                     -- Dia da semana pedido: um de cada período só na primeira
+                     -- ocorrência com vaga; as seguintes entram em ordem, no passo 2
+                     OR (passo = 1 AND semana AND c_dia[i] <> c_dia[1]);
           -- No mesmo dia: no máximo max_por_dia, de períodos diferentes e espaçadas
           CONTINUE WHEN (SELECT count(*) FROM unnest(s_dia) AS d WHERE d = c_dia[i]) >= max_por_dia
                      OR EXISTS (SELECT 1 FROM unnest(s_t, s_dia, s_per) AS s(t, d, p)
@@ -794,7 +805,9 @@ BEGIN
             -- distância, em hora do dia, até a escolhida mais próxima
             SELECT min(abs(EXTRACT(EPOCH FROM (c_t[i] AT TIME ZONE tz)::time - (x AT TIME ZONE tz)::time)))
               INTO dist FROM unnest(s_t) AS x;
-            CONTINUE WHEN dist IS NULL OR dist = 0 OR (melhor IS NOT NULL AND dist <= melhor_d);
+            -- Dia da semana pedido: a mesma hora em outra semana vale (fica por
+            -- último), para não pular uma semana com vaga
+            CONTINUE WHEN dist IS NULL OR (dist = 0 AND NOT semana) OR (melhor IS NOT NULL AND dist <= melhor_d);
             melhor_d := dist;
           END IF;
           melhor := i;
@@ -1508,7 +1521,7 @@ COMMENT ON COLUMN sales_agent.horarios_atendimento.dia_semana IS '1=segunda ... 
 
 COMMENT ON FUNCTION sales_agent.faixas_de_inicio(date, jsonb, integer, timestamp with time zone[], timestamp with time zone[]) IS 'Horários em que uma consulta pode começar num dia: dentro dos blocos de atendimento e fora dos intervalos proibidos. Os intervalos proibidos são abertos (encostar não é conflito), então um vão do tamanho exato da consulta conta como livre. Usada pela agenda_horarios.';
 
-COMMENT ON FUNCTION sales_agent.agenda_horarios(jsonb, text, timestamp with time zone, timestamp with time zone, jsonb) IS 'Regras de horário da agenda num lugar só: expediente, antecedência mínima, prazo máximo e folga entre consultas. Recebe os eventos como o Google devolve e o telefone da cliente; as consultas dela não ocupam horário. Sem horário pedido, devolve até 3 sugestões nos 3 primeiros dias com vaga: no máximo 2 no mesmo dia, de períodos diferentes (periodos_do_dia); primeiro uma de cada período, depois horas diferentes das já escolhidas. Com p_filtro (periodo, dia_semana, data), só desse recorte; sem nenhuma, motivo diz por quê. Também devolve as consultas da cliente. Com horário pedido, diz se está livre ou o motivo da recusa. Não tem valores padrão próprios: usa os da business_config. Devolve só dados.';
+COMMENT ON FUNCTION sales_agent.agenda_horarios(jsonb, text, timestamp with time zone, timestamp with time zone, jsonb) IS 'Regras de horário da agenda num lugar só: expediente, antecedência mínima, prazo máximo e folga entre consultas. Recebe os eventos como o Google devolve e o telefone da cliente; as consultas dela não ocupam horário. Sem horário pedido, devolve até 3 sugestões nos 3 primeiros dias com vaga: no máximo 2 no mesmo dia, de períodos diferentes (periodos_do_dia); primeiro uma de cada período, depois horas diferentes das já escolhidas. Com p_filtro (periodo, dia_semana, data), só desse recorte; sem nenhuma, motivo diz por quê. Data pedida: só ela. Dia da semana pedido: a próxima ocorrência primeiro, completada pelas seguintes, sem pular nenhuma com vaga. Também devolve as consultas da cliente. Com horário pedido, diz se está livre ou o motivo da recusa. Não tem valores padrão próprios: usa os da business_config. Devolve só dados.';
 
 COMMENT ON COLUMN sales_agent.business_config.validade_fatos_dias IS 'Por quantos dias um fato da conversa (decidiu, horário escolhido, valores informados...) ainda conduz a conversa. Mais velho que isso, a regra da etapa o ignora (o fato continua no registro). Padrão 30.';
 
