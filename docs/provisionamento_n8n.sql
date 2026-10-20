@@ -61,6 +61,8 @@
 --   dia — dia da semana: a próxima ocorrência primeiro, completada pelas
 --   seguintes, sem pular nenhuma com vaga; data: só ela (sem vaga, a Giulia
 --   recebe a lista geral).
+--   Atualizado em 20/10/2026 (tarefa 3.18, bug #28): registrar_fatos_resposta
+--   reconhece a hora até 100 caracteres depois da data, sem outra data no meio.
 --
 -- AO MUDAR A ESTRUTURA DA GIULIA
 --   Toda tabela, coluna, índice ou função nova no banco da Vanessa precisa
@@ -1292,6 +1294,8 @@ $function$
 -- de o envio dar certo, só nas etapas antes do pagamento.
 -- Valores: o texto traz o valor da consulta (R$490,00, R$ 490,00 ou R$490).
 -- Horários: o texto traz a data e a hora de uma das sugestões (15/10 às 14h).
+-- A hora vale até 100 caracteres depois da data, sem outra data no meio:
+-- "29/10 (quinta-feira) às 18h" e "22/10, estão disponíveis: 13h30, 18h".
 CREATE OR REPLACE FUNCTION sales_agent.registrar_fatos_resposta(p_telefone text, p_wamid text, p_texto text, p_sugestoes jsonb, p_etapa text, p_agora timestamp with time zone DEFAULT now())
  RETURNS jsonb
  LANGUAGE plpgsql
@@ -1338,7 +1342,7 @@ BEGIN
     t := (s->>'inicio')::timestamptz;
     CONTINUE WHEN t IS NULL;
     padrao := '(^|[^0-9])0?' || to_char(t AT TIME ZONE tz, 'FMDD') || '/' || to_char(t AT TIME ZONE tz, 'MM')
-              || '(/[0-9]{2,4})?[^0-9]{1,15}0?' || to_char(t AT TIME ZONE tz, 'FMHH24')
+              || '(/[0-9]{2,4})?((?![0-9]{1,2}/[0-9]{1,2}).){0,100}[^0-9]0?' || to_char(t AT TIME ZONE tz, 'FMHH24')
               || CASE WHEN to_char(t AT TIME ZONE tz, 'MI') = '00'
                       THEN '(h(?![0-9])|:00|\s*horas?)'
                       ELSE '(h' || to_char(t AT TIME ZONE tz, 'MI') || '|:' || to_char(t AT TIME ZONE tz, 'MI') || ')' END;
