@@ -63,6 +63,14 @@
 --   recebe a lista geral).
 --   Atualizado em 20/10/2026 (tarefa 3.18, bug #28): registrar_fatos_resposta
 --   reconhece a hora até 100 caracteres depois da data, sem outra data no meio.
+--   Atualizado em 23/10/2026 (tarefa 3.18, fase B): situacao_da_conversa
+--   (linhas que só informam fatos, hesitação tira do Fechamento, devolve
+--   valores_informados, perfil_a_confirmar e perfil_caso, linha da etapa
+--   fora_do_perfil); fatos_e_etapa (linha do dia da semana que não bate com a
+--   data, devolve perfil_whatsapp_fora); registrar_fatos_mensagem grava
+--   nome_informado e a regra chk_fato_tipo_valor o aceita (seção 4f, recriada
+--   a cada execução); business_config.genero_atendido (padrão "todos") e a view
+--   business_config_runtime com a coluna nova; função caso_do_nome.
 --
 -- AO MUDAR A ESTRUTURA DA GIULIA
 --   Toda tabela, coluna, índice ou função nova no banco da Vanessa precisa
@@ -197,18 +205,7 @@ CREATE TABLE IF NOT EXISTS sales_agent.fatos_conversa (
   wamid text,
   criado_em timestamp with time zone DEFAULT now() NOT NULL,
   CONSTRAINT fatos_conversa_pkey PRIMARY KEY (id),
-  CONSTRAINT chk_fato_origem CHECK ((origem = ANY (ARRAY['classificador'::text, 'sistema'::text, 'meta'::text]))),
-  -- A lista de tipos e de valores permitidos fica só aqui: as funções tentam
-  -- gravar e descartam o que esta regra recusar.
-  CONSTRAINT chk_fato_tipo_valor CHECK ((
-       ((tipo = ANY (ARRAY['problema_contado'::text, 'vai_pensar'::text])) AND (valor = 'sim'::text))
-    OR ((tipo = ANY (ARRAY['decidiu'::text, 'fora_do_perfil'::text, 'conhece_trabalho'::text, 'ja_fez_terapia'::text])) AND (valor = ANY (ARRAY['sim'::text, 'nao'::text])))
-    OR ((tipo = 'objecao'::text) AND (valor = ANY (ARRAY['preco'::text, 'tempo'::text, 'outra_pessoa'::text, 'duvida_terapia'::text, 'outra'::text])))
-    OR ((tipo = 'horario_escolhido'::text) AND (horario IS NOT NULL))
-    OR ((tipo = 'valores_informados'::text) AND (valor_consulta IS NOT NULL))
-    OR (tipo = 'horarios_oferecidos'::text)
-    OR ((tipo = 'origem_anuncio'::text) AND (detalhes IS NOT NULL))
-  ))
+  CONSTRAINT chk_fato_origem CHECK ((origem = ANY (ARRAY['classificador'::text, 'sistema'::text, 'meta'::text])))
 );
 
 CREATE TABLE IF NOT EXISTS sales_agent.horarios_atendimento (
@@ -318,6 +315,37 @@ ALTER TABLE sales_agent.business_config
 DO $do$ BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'chk_validade_fatos' AND conrelid = 'sales_agent.business_config'::regclass) THEN
     ALTER TABLE sales_agent.business_config ADD CONSTRAINT chk_validade_fatos CHECK (((validade_fatos_dias >= 1) AND (validade_fatos_dias <= 365)));
+  END IF;
+END $do$;
+
+
+-- 4f. Perfil atendido — tarefa 3.18 (21 e 22/10/2026) -----------------------------
+-- Regra de tipos e valores dos fatos da conversa, com o fato nome_informado.
+-- A lista de tipos e de valores permitidos fica só aqui: as funções tentam
+-- gravar e descartam o que esta regra recusar. Recriada a cada execução, para
+-- que o arquivo também atualize um banco montado com a versão anterior dele.
+
+ALTER TABLE sales_agent.fatos_conversa DROP CONSTRAINT IF EXISTS chk_fato_tipo_valor;
+ALTER TABLE sales_agent.fatos_conversa ADD CONSTRAINT chk_fato_tipo_valor CHECK ((
+       ((tipo = ANY (ARRAY['problema_contado'::text, 'vai_pensar'::text])) AND (valor = 'sim'::text))
+    OR ((tipo = ANY (ARRAY['decidiu'::text, 'fora_do_perfil'::text, 'conhece_trabalho'::text, 'ja_fez_terapia'::text])) AND (valor = ANY (ARRAY['sim'::text, 'nao'::text])))
+    OR ((tipo = 'objecao'::text) AND (valor = ANY (ARRAY['preco'::text, 'tempo'::text, 'outra_pessoa'::text, 'duvida_terapia'::text, 'outra'::text])))
+    OR ((tipo = 'horario_escolhido'::text) AND (horario IS NOT NULL))
+    OR ((tipo = 'valores_informados'::text) AND (valor_consulta IS NOT NULL))
+    OR (tipo = 'horarios_oferecidos'::text)
+    OR ((tipo = 'origem_anuncio'::text) AND (detalhes IS NOT NULL))
+    OR ((tipo = 'nome_informado'::text) AND (valor = ANY (ARRAY['feminino'::text, 'masculino'::text, 'ambos'::text])))
+  ));
+
+-- Gênero que a terapeuta atende. Padrão "todos": terapeuta nova começa sem
+-- conferência pelo nome. O valor de cada terapeuta entra no onboarding.
+
+ALTER TABLE sales_agent.business_config
+  ADD COLUMN IF NOT EXISTS genero_atendido text DEFAULT 'todos'::text NOT NULL;
+
+DO $do$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'chk_genero_atendido' AND conrelid = 'sales_agent.business_config'::regclass) THEN
+    ALTER TABLE sales_agent.business_config ADD CONSTRAINT chk_genero_atendido CHECK ((genero_atendido = ANY (ARRAY['mulheres'::text, 'homens'::text, 'todos'::text])));
   END IF;
 END $do$;
 
@@ -947,9 +975,9 @@ DECLARE
 BEGIN
   hoje := (p_agora AT TIME ZONE tz)::date;
 
-  -- Campos de sim/não e objeção. Quem decide o que é válido é a regra da
-  -- tabela (chk_fato_tipo_valor): o que ela recusar é descartado.
-  FOREACH campo IN ARRAY ARRAY['problema_contado', 'decidiu', 'fora_do_perfil', 'conhece_trabalho', 'ja_fez_terapia', 'objecao', 'vai_pensar'] LOOP
+  -- Campos de sim/não, objeção e nome informado. Quem decide o que é válido
+  -- é a regra da tabela (chk_fato_tipo_valor): o que ela recusar é descartado.
+  FOREACH campo IN ARRAY ARRAY['problema_contado', 'decidiu', 'fora_do_perfil', 'conhece_trabalho', 'ja_fez_terapia', 'objecao', 'vai_pensar', 'nome_informado'] LOOP
     v := lower(btrim(c->>campo));
     CONTINUE WHEN v IS NULL OR v = '' OR v = 'nada';
     BEGIN
@@ -1023,6 +1051,23 @@ END;
 $function$
 ;
 
+-- Caso de um nome contra o gênero atendido pela terapeuta. Regra única, usada
+-- pela situacao_da_conversa e pela fatos_e_etapa.
+CREATE OR REPLACE FUNCTION sales_agent.caso_do_nome(p_genero_atendido text, p_genero_nome text)
+ RETURNS text
+ LANGUAGE sql
+ IMMUTABLE
+AS $function$
+  -- Regra única, para o nome informado e para o nome do perfil do WhatsApp:
+  -- "fora" quando o nome é do gênero que a terapeuta não atende, "dois" quando
+  -- serve para os dois e a terapeuta atende um gênero só; senão, NULL.
+  SELECT CASE p_genero_atendido
+           WHEN 'mulheres' THEN CASE p_genero_nome WHEN 'masculino' THEN 'fora' WHEN 'ambos' THEN 'dois' END
+           WHEN 'homens'   THEN CASE p_genero_nome WHEN 'feminino'  THEN 'fora' WHEN 'ambos' THEN 'dois' END
+         END
+$function$
+;
+
 -- Calcula a etapa a partir dos fatos, do banco e da agenda, e monta as linhas
 -- de fatos da SITUACAO_DA_CLIENTE. Não grava nada.
 -- Ordem fixa: a primeira condição que valer decide a etapa.
@@ -1054,6 +1099,11 @@ DECLARE
   h_livre      boolean;
   obj          text;
   pensar_em    timestamptz;
+  hesita_em    timestamptz;
+  hesitou      boolean := false;
+  nome_v       text;
+  perfil_conf  boolean := false;
+  perfil_caso  text;
   etapa        text;
   primeira     boolean;
   linhas       text[] := '{}';
@@ -1085,7 +1135,8 @@ BEGIN
    WHERE telefone = p_telefone AND tipo = 'fora_do_perfil' AND criado_em > corte
    ORDER BY criado_em DESC, id DESC LIMIT 1;
 
-  -- "Valores informados" só vale se o valor for o atual (preço sempre o atual)
+  -- "Valores informados" só vale se o valor for o atual (preço sempre o atual).
+  -- Devolvido também em valores_informados: a trava da cobrança lê daqui.
   valores_ok := EXISTS (SELECT 1 FROM sales_agent.fatos_conversa
                          WHERE telefone = p_telefone AND tipo = 'valores_informados' AND criado_em > corte
                            AND valor_consulta = valor_atual);
@@ -1115,6 +1166,32 @@ BEGIN
     h_livre := COALESCE((sales_agent.agenda_horarios(p_eventos, p_telefone, h_ini, p_agora)->>'livre')::boolean, false);
   END IF;
 
+  -- Hesitação depois do compromisso: "vou pensar" ou objeção mais recente que
+  -- a última decisão ou que o horário escolhido. Ela volta a decidir, então
+  -- sai do Fechamento até decidir de novo. Na mesma mensagem, não conta.
+  SELECT max(criado_em) INTO hesita_em FROM sales_agent.fatos_conversa
+   WHERE telefone = p_telefone AND tipo IN ('vai_pensar', 'objecao') AND criado_em > corte;
+  hesitou := hesita_em > GREATEST(CASE WHEN dec_valor = 'sim' THEN dec_em END,
+                                  CASE WHEN h_ok THEN h_em END);
+
+  -- Perfil a confirmar: a terapeuta atende um gênero só (genero_atendido), o
+  -- último nome de quem vai à consulta é do outro gênero ou serve para os dois
+  -- (classificador), e a conversa não tem confirmação de que a consulta é para
+  -- alguém no perfil (fora_do_perfil = nao, antes ou depois do nome). Fora do
+  -- perfil confirmado já é outra etapa. Atende todos: não há o que confirmar
+  -- pelo nome. Lido pela trava da cobrança.
+  SELECT valor INTO nome_v FROM sales_agent.fatos_conversa
+   WHERE telefone = p_telefone AND tipo = 'nome_informado' AND criado_em > corte
+   ORDER BY criado_em DESC, id DESC LIMIT 1;
+  -- O caso do nome vem da caso_do_nome, a mesma regra usada para o nome do
+  -- perfil do WhatsApp: "dois" (o nome serve para os dois) ou "fora" (o nome
+  -- é do gênero não atendido); a montagem do prompt escolhe o texto pelo caso
+  perfil_caso := sales_agent.caso_do_nome(cfg.genero_atendido, nome_v);
+  perfil_conf := perfil_caso IS NOT NULL AND fora IS DISTINCT FROM 'nao' AND fora IS DISTINCT FROM 'sim';
+  IF NOT perfil_conf THEN
+    perfil_caso := NULL;
+  END IF;
+
   -- A etapa: banco e agenda antes da conversa
   IF fora = 'sim' THEN
     etapa := 'fora_do_perfil';
@@ -1124,7 +1201,7 @@ BEGIN
     etapa := 'pago_sem_consulta';
   ELSIF pix_prazo IS NOT NULL THEN
     etapa := 'aguardando_pagamento';
-  ELSIF h_ok OR (dec_valor = 'sim' AND oferta_antes) THEN
+  ELSIF (h_ok OR (dec_valor = 'sim' AND oferta_antes)) AND hesitou IS NOT TRUE THEN
     etapa := 'fechamento';
   ELSIF problema_em IS NOT NULL AND (oferta_em IS NULL OR problema_em > oferta_em) THEN
     etapa := 'qualificacao';
@@ -1143,7 +1220,8 @@ BEGIN
        AND COALESCE(message->>'content', '') <> ''
        AND COALESCE(message->'additional_kwargs'->>'sender', '') <> 'therapist');
 
-  -- Linhas da SITUACAO_DA_CLIENTE (só as que se aplicam)
+  -- Linhas da SITUACAO_DA_CLIENTE (só as que se aplicam). Só informam fatos:
+  -- o que a Giulia faz com eles está no prompt.
   IF sinal_livre THEN
     linhas := linhas || 'Sinal: pago, ainda não usado.'::text;
   ELSIF pix_prazo IS NOT NULL THEN
@@ -1157,7 +1235,17 @@ BEGIN
 
   IF h_ok THEN
     linhas := linhas || ('Horário escolhido: ' || sales_agent.fmt_data_hora(h_ini)
-                         || CASE WHEN h_livre THEN ' — livre (conferido agora).' ELSE ' — não está mais livre: ofereça outro.' END);
+                         || CASE WHEN h_livre THEN ' — livre (conferido agora).' ELSE ' — não está mais livre (conferido agora).' END);
+  END IF;
+
+  IF perfil_conf AND etapa IN ('chegada', 'qualificacao', 'oferta', 'fechamento') THEN
+    linhas := linhas || ('Perfil atendido: ainda não confirmado nesta conversa (o nome de quem vai à consulta '
+                         || CASE nome_v WHEN 'masculino' THEN 'é de homem' WHEN 'feminino' THEN 'é de mulher'
+                                        ELSE 'pode ser de homem ou de mulher' END || ').');
+  END IF;
+
+  IF etapa = 'fora_do_perfil' THEN
+    linhas := linhas || 'Perfil atendido: a conversa confirmou que a consulta é para alguém fora do perfil atendido.'::text;
   END IF;
 
   SELECT valor INTO obj FROM sales_agent.fatos_conversa
@@ -1177,7 +1265,9 @@ BEGIN
     linhas := linhas || ('Disse que ia pensar, em ' || to_char(pensar_em AT TIME ZONE tz, 'DD/MM') || '.');
   END IF;
 
-  RETURN jsonb_build_object('etapa', etapa, 'primeira_resposta', primeira, 'linhas', to_jsonb(linhas));
+  RETURN jsonb_build_object('etapa', etapa, 'primeira_resposta', primeira, 'linhas', to_jsonb(linhas),
+                            'valores_informados', valores_ok, 'perfil_a_confirmar', perfil_conf,
+                            'perfil_caso', perfil_caso);
 END;
 $function$
 ;
@@ -1220,6 +1310,10 @@ DECLARE
   reg     jsonb;
   sit     jsonb;
   h       jsonb;
+  h_local timestamp;
+  d_cit   integer;
+  d_alt   date;
+  hoje    date;
   linhas  jsonb;
   c       jsonb;
   per     record;
@@ -1229,17 +1323,41 @@ DECLARE
   ag      jsonb;
   recorte text;
   pedidos jsonb;
+  genero  text;
+  wpp_fora boolean := false;
 BEGIN
   reg := sales_agent.registrar_fatos_mensagem(p_telefone, p_wamid, p_classificacao, p_eventos, p_referral, p_agora);
   sit := sales_agent.situacao_da_conversa(p_telefone, p_eventos, p_agora);
   linhas := sit->'linhas';
 
-  -- Horário pedido nesta mensagem que não está livre: não vira fato, mas a
-  -- Giulia precisa saber o motivo para oferecer outro
+  -- Horário pedido nesta mensagem que não virou fato: a linha só informa o
+  -- motivo. O que a Giulia faz com isso está no prompt.
   h := reg->'horario';
   IF h->>'resultado' = 'indisponivel' THEN
-    linhas := linhas || to_jsonb('Horário pedido nesta mensagem: ' || (h->>'fmt') || ' — não disponível: '
-      || sales_agent.fmt_motivo(h->>'motivo') || '. Ofereça outro.');
+    linhas := linhas || to_jsonb('Horário pedido nesta mensagem: ' || (h->>'fmt') || ' — não disponível (conferido agora): '
+      || sales_agent.fmt_motivo(h->>'motivo') || '.');
+  ELSIF h->>'resultado' = 'dia_nao_bate' THEN
+    -- O dia da semana que ela disse não combina com a data (bug #25): o dia
+    -- citado sai pelo nome padrão (dia_iso + fmt_dias), nunca pelo texto livre.
+    -- A linha traz também a data desse dia da semana mais próxima da data dita
+    -- (até 3 dias antes ou depois), para a Giulia não fazer conta de data. Se
+    -- essa data for hoje ou já tiver passado, vai a próxima a partir de amanhã.
+    h_local := (h->>'inicio')::timestamptz AT TIME ZONE tz;
+    hoje    := (p_agora AT TIME ZONE tz)::date;
+    d_cit   := sales_agent.dia_iso(h->>'dia_citado');
+    d_alt   := h_local::date + ((((d_cit - EXTRACT(ISODOW FROM h_local)::integer + 3) % 7) + 7) % 7 - 3);
+    linhas := linhas || to_jsonb('Horário pedido nesta mensagem: '
+      || sales_agent.fmt_dias(ARRAY[d_cit])
+      || ', ' || to_char(h_local, 'DD/MM') || ' às ' || sales_agent.fmt_hora(h_local::time)
+      || ' — o dia da semana não bate com a data: ' || to_char(h_local, 'DD/MM') || ' é '
+      || sales_agent.fmt_dias(ARRAY[EXTRACT(ISODOW FROM h_local)::integer]) || '; '
+      || CASE WHEN d_alt > hoje
+           THEN CASE WHEN d_cit >= 6 THEN 'o ' ELSE 'a ' END || sales_agent.fmt_dias(ARRAY[d_cit])
+                || CASE WHEN d_cit >= 6 THEN ' mais próximo' ELSE ' mais próxima' END
+                || ' dessa data é ' || to_char(d_alt, 'DD/MM')
+           ELSE CASE WHEN d_cit >= 6 THEN 'o próximo ' ELSE 'a próxima ' END || sales_agent.fmt_dias(ARRAY[d_cit])
+                || ' é ' || to_char(d_alt + 7, 'DD/MM')
+         END || '.');
   END IF;
 
   -- Pedido de horários de um período e/ou de um dia, sem hora exata: as opções
@@ -1279,7 +1397,24 @@ BEGIN
     END IF;
   END IF;
 
+  -- Nome do perfil do WhatsApp do gênero que a terapeuta não atende, na
+  -- primeira resposta da Giulia: a montagem do prompt acrescenta a pergunta do
+  -- perfil. Mesma regra do nome informado (caso_do_nome), só no caso "fora".
+  -- Só nas etapas da venda (quem já pagou ou tem consulta não recebe a
+  -- pergunta). Não vale quando o perfil já está a confirmar pelo nome
+  -- informado, nem quando esta mensagem já diz se a consulta é para alguém no
+  -- perfil.
+  -- Nada é gravado.
+  IF (sit->>'primeira_resposta')::boolean IS TRUE
+     AND (sit->>'perfil_a_confirmar')::boolean IS NOT TRUE
+     AND sit->>'etapa' IN ('chegada', 'qualificacao', 'oferta', 'fechamento')
+     AND COALESCE(c->>'fora_do_perfil', 'nada') NOT IN ('sim', 'nao') THEN
+    SELECT genero_atendido INTO genero FROM sales_agent.business_config_runtime LIMIT 1;
+    wpp_fora := sales_agent.caso_do_nome(genero, c->>'nome_perfil') = 'fora';
+  END IF;
+
   RETURN sit || jsonb_build_object(
+    'perfil_whatsapp_fora', COALESCE(wpp_fora, false),
     'linhas', linhas,
     'linhas_texto', (SELECT COALESCE(string_agg(l, E'\n' ORDER BY n), '') FROM jsonb_array_elements_text(linhas) WITH ORDINALITY AS t(l, n)),
     'registro', reg,
@@ -1457,7 +1592,8 @@ CREATE OR REPLACE VIEW sales_agent.business_config_runtime AS
     limite_reagendamentos,
     intervalo_nova_consulta_dias,
     validade_pix_horas,
-    validade_fatos_dias
+    validade_fatos_dias,
+    genero_atendido
    FROM sales_agent.business_config c;
 
 CREATE OR REPLACE TRIGGER trg_touch_business_config BEFORE UPDATE ON sales_agent.business_config FOR EACH ROW EXECUTE FUNCTION sales_agent.touch_business_config();
@@ -1530,8 +1666,8 @@ COMMENT ON FUNCTION sales_agent.agenda_horarios(jsonb, text, timestamp with time
 COMMENT ON COLUMN sales_agent.business_config.validade_fatos_dias IS 'Por quantos dias um fato da conversa (decidiu, horário escolhido, valores informados...) ainda conduz a conversa. Mais velho que isso, a regra da etapa o ignora (o fato continua no registro). Padrão 30.';
 
 COMMENT ON TABLE sales_agent.fatos_conversa IS 'Registro dos fatos da conversa, por cliente (3.18). Cada fato é uma linha nova, com quem anotou e o código da mensagem; nada é alterado nem apagado pela Giulia. De cada tipo vale o mais recente. A etapa não é guardada: é calculada pela situacao_da_conversa.';
-COMMENT ON COLUMN sales_agent.fatos_conversa.tipo IS 'problema_contado, decidiu, horario_escolhido, fora_do_perfil, valores_informados, horarios_oferecidos (mudam a etapa) · conhece_trabalho, ja_fez_terapia, objecao, vai_pensar, origem_anuncio (métrica). Fato de métrica nunca muda a etapa.';
-COMMENT ON COLUMN sales_agent.fatos_conversa.valor IS 'sim/nao, ou o tipo de objeção (preco, tempo, outra_pessoa, duvida_terapia, outra).';
+COMMENT ON COLUMN sales_agent.fatos_conversa.tipo IS 'problema_contado, decidiu, horario_escolhido, fora_do_perfil, valores_informados, horarios_oferecidos (mudam a etapa) · conhece_trabalho, ja_fez_terapia, objecao, vai_pensar, origem_anuncio (métrica) · nome_informado (não muda a etapa; decide o perfil a confirmar). Fato de métrica nunca muda a etapa.';
+COMMENT ON COLUMN sales_agent.fatos_conversa.valor IS 'sim/nao, o tipo de objeção (preco, tempo, outra_pessoa, duvida_terapia, outra) ou, no nome informado, feminino/masculino/ambos.';
 COMMENT ON COLUMN sales_agent.fatos_conversa.horario IS 'Horário escolhido pela cliente. Só gravado depois de a agenda_horarios confirmar que estava livre.';
 COMMENT ON COLUMN sales_agent.fatos_conversa.valor_consulta IS 'Valor da consulta que a Giulia informou. O fato só vale enquanto for igual ao valor atual (preço sempre o atual).';
 COMMENT ON COLUMN sales_agent.fatos_conversa.detalhes IS 'origem_anuncio: identificadores do anúncio (ctwa_clid, source_id...). horarios_oferecidos: os horários encontrados na resposta.';
@@ -1539,14 +1675,16 @@ COMMENT ON COLUMN sales_agent.fatos_conversa.origem IS 'Quem anotou: classificad
 COMMENT ON COLUMN sales_agent.fatos_conversa.wamid IS 'Código da mensagem do WhatsApp que gerou o fato. O texto não é copiado: o CRM o guarda pelo mesmo código.';
 
 COMMENT ON FUNCTION sales_agent.dia_iso(text) IS 'Nome do dia da semana para o número ISO (1 = segunda ... 7 = domingo). Usada para conferir o dia citado pela cliente com a data.';
-COMMENT ON FUNCTION sales_agent.registrar_fatos_mensagem(text, text, jsonb, jsonb, jsonb, timestamp with time zone) IS 'Grava o que o classificador achou na mensagem da cliente ("nada" não é gravado). Horário pedido: confere o dia da semana com a data e a agenda_horarios; só vira fato se estiver livre. Origem do anúncio: guarda os identificadores do referral da Meta.';
-COMMENT ON FUNCTION sales_agent.situacao_da_conversa(text, jsonb, timestamp with time zone) IS 'Calcula a etapa (fora_do_perfil, agendada, pago_sem_consulta, aguardando_pagamento, fechamento, qualificacao, oferta, chegada — nesta ordem, a primeira que valer) e as linhas de fatos da SITUACAO_DA_CLIENTE. Ignora fatos anteriores ao último sinal usado ou mais velhos que validade_fatos_dias. Não grava nada.';
-COMMENT ON FUNCTION sales_agent.fatos_e_etapa(text, text, jsonb, jsonb, jsonb, timestamp with time zone) IS 'Chamada única do n8n antes da Giulia responder: registrar_fatos_mensagem + situacao_da_conversa, mais a linha do horário pedido que não está livre e a linha do período ou dia pedido. Devolve horarios_pedidos (texto e sugestoes) quando há horários livres nesse recorte: no n8n, eles substituem as sugestões gerais.';
+COMMENT ON FUNCTION sales_agent.registrar_fatos_mensagem(text, text, jsonb, jsonb, jsonb, timestamp with time zone) IS 'Grava o que o classificador achou na mensagem da cliente ("nada" não é gravado), inclusive o nome informado (feminino, masculino ou ambos). Horário pedido: confere o dia da semana com a data e a agenda_horarios; só vira fato se estiver livre. Origem do anúncio: guarda os identificadores do referral da Meta.';
+COMMENT ON FUNCTION sales_agent.situacao_da_conversa(text, jsonb, timestamp with time zone) IS 'Calcula a etapa (fora_do_perfil, agendada, pago_sem_consulta, aguardando_pagamento, fechamento, qualificacao, oferta, chegada — nesta ordem, a primeira que valer) e as linhas de fatos da SITUACAO_DA_CLIENTE, que só informam fatos. Um "vou pensar" ou uma objeção mais recente que a última decisão ou que o horário escolhido tira a cliente do Fechamento até ela decidir de novo. Devolve também valores_informados (o valor atual da consulta já foi informado nesta conversa), lido pela trava da cobrança. Devolve ainda perfil_a_confirmar: a terapeuta atende um gênero só (business_config.genero_atendido), o último nome de quem vai à consulta é do outro gênero ou serve para os dois e a conversa não confirmou que a consulta é para alguém no perfil (também lido pela trava da cobrança), e perfil_caso: "dois" quando o nome serve para os dois, "fora" quando é do gênero não atendido, pela caso_do_nome (lido pela montagem do prompt). Na etapa fora_do_perfil, uma linha informa que a conversa confirmou o perfil não atendido. Ignora fatos anteriores ao último sinal usado ou mais velhos que validade_fatos_dias. Não grava nada.';
+COMMENT ON FUNCTION sales_agent.fatos_e_etapa(text, text, jsonb, jsonb, jsonb, timestamp with time zone) IS 'Chamada única do n8n antes da Giulia responder: registrar_fatos_mensagem + situacao_da_conversa, mais a linha do horário pedido que não está livre ou cujo dia da semana não bate com a data (com a data desse dia da semana mais próxima da data dita), e a linha do período ou dia pedido. As linhas só informam fatos. Devolve horarios_pedidos (texto e sugestoes) quando há horários livres nesse recorte: no n8n, eles substituem as sugestões gerais. Devolve também perfil_whatsapp_fora: na primeira resposta, numa etapa da venda (chegada, qualificação, oferta ou fechamento), o nome do perfil do WhatsApp (classificador) é do gênero que a terapeuta não atende, pela caso_do_nome, o perfil não está a confirmar pelo nome informado e a mensagem não diz se a consulta é para alguém no perfil (lido pela montagem do prompt). Não grava o nome do perfil.';
 COMMENT ON FUNCTION sales_agent.registrar_fatos_resposta(text, text, text, jsonb, text, timestamp with time zone) IS 'Grava valores_informados e horarios_oferecidos a partir da resposta enviada da Giulia. Só nas etapas antes do pagamento. Chamada depois de o envio dar certo.';
 COMMENT ON FUNCTION sales_agent.periodos_do_dia() IS 'Períodos do dia (manha, tarde, noite) com início e fim, num lugar só. Usada pela agenda_horarios e pela fatos_e_etapa.';
 COMMENT ON FUNCTION sales_agent.proxima_data(text, date) IS 'Data escrita como DD/MM (com ou sem ano): a próxima com esse dia e mês, a partir de hoje. NULL se inválida. Usada pela registrar_fatos_mensagem e pela fatos_e_etapa.';
 COMMENT ON FUNCTION sales_agent.fmt_motivo(text) IS 'Motivo de um horário não estar disponível (antecedencia, fora_do_prazo, fora_do_expediente, sem_vaga, ocupado), por extenso, para o prompt.';
 COMMENT ON FUNCTION sales_agent.fmt_sugestoes(jsonb) IS 'Sugestões de horário (fmt) uma por linha, na ordem em que vieram, para HORARIOS_DISPONIVEIS. NULL se a lista estiver vazia. Usada pelo nó Calcular Horarios e pela fatos_e_etapa.';
+COMMENT ON COLUMN sales_agent.business_config.genero_atendido IS 'Gênero que a terapeuta atende: mulheres, homens ou todos. Com mulheres ou homens, o sistema confere o nome de quem vai à consulta: nome do outro gênero ou que serve para os dois deixa o perfil a confirmar, e a cobrança só sai depois da confirmação. Com todos (padrão), não há conferência pelo nome. O texto do perfil que a Giulia diz fica na base de conhecimento (perfil_atendido): ao mudar um, conferir o outro.';
+COMMENT ON FUNCTION sales_agent.caso_do_nome(text, text) IS 'Caso de um nome contra o gênero atendido pela terapeuta (business_config.genero_atendido): "fora" quando o nome é do gênero não atendido, "dois" quando serve para os dois, NULL nos outros casos. Usada pela situacao_da_conversa (nome informado) e pela fatos_e_etapa (nome do perfil do WhatsApp).';
 
 
 -- 13. Permissões -----------------------------------------------------------------
@@ -1615,6 +1753,8 @@ REVOKE ALL ON FUNCTION sales_agent.fmt_motivo(text) FROM PUBLIC, anon, authentic
 GRANT EXECUTE ON FUNCTION sales_agent.fmt_motivo(text) TO sales_agent_api;
 REVOKE ALL ON FUNCTION sales_agent.fmt_sugestoes(jsonb) FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION sales_agent.fmt_sugestoes(jsonb) TO sales_agent_api;
+REVOKE ALL ON FUNCTION sales_agent.caso_do_nome(text, text) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION sales_agent.caso_do_nome(text, text) TO sales_agent_api;
 
 -- Base de conhecimento: o n8n lê pela API REST com a chave service_role.
 -- anon e authenticated não recebem grant nesta tabela, de propósito.
